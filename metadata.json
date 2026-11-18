@@ -1,0 +1,6 @@
+{
+  "name": "React UI Studio",
+  "description": "Wizualny edytor interfejsów React i Tailwind CSS z drzewem warstw, historią zmian oraz eksportem kodu JSX.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
