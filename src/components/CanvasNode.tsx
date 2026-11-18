@@ -1,20 +1,27 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
 import { GripVertical, Image as ImageIcon } from 'lucide-react';
-import type { EditorNode, NodesMap, NodeType } from '../types/editor';
+import {
+  DND_ITEM_TYPE,
+  DND_NEW_ICON_TYPE,
+  type EditorNode,
+  type NodesMap,
+  type NodeType,
+} from '../types/editor';
+import { getLucideIcon } from '../constants/lucideIcons';
 import {
   isContainerNodeType,
   isDescendantOrSelf,
+  splitIconClasses,
   splitOuterLayoutClasses,
   type DropPosition,
 } from '../utils/editorLogic';
 
-const DND_ITEM_TYPE = 'CANVAS_NODE';
-
 interface DragItem {
-  id: string;
-  parentId: string | null;
-  type: NodeType;
+  id?: string;
+  parentId?: string | null;
+  type?: NodeType;
+  iconName?: string;
 }
 
 interface CanvasNodeProps {
@@ -22,8 +29,10 @@ interface CanvasNodeProps {
   nodes: NodesMap;
   selectedId: string;
   previewMode: boolean;
+  showGuides: boolean;
   onSelect: (id: string) => void;
   onMoveNode: (dragId: string, targetId: string, position: DropPosition) => void;
+  onDropNewIcon: (iconName: string, targetId: string, position: DropPosition) => void;
 }
 
 function isHorizontalLayout(parentNode: EditorNode | undefined): boolean {
@@ -71,8 +80,10 @@ export const CanvasNode = memo(function CanvasNode({
   nodes,
   selectedId,
   previewMode,
+  showGuides,
   onSelect,
   onMoveNode,
+  onDropNewIcon,
 }: CanvasNodeProps) {
   const node = nodes[id];
   const parentNode = node?.parentId ? nodes[node.parentId] : undefined;
@@ -111,10 +122,13 @@ export const CanvasNode = memo(function CanvasNode({
     { isOverShallow: boolean }
   >(
     () => ({
-      accept: DND_ITEM_TYPE,
-      canDrop: (item) => {
+      accept: [DND_ITEM_TYPE, DND_NEW_ICON_TYPE],
+      canDrop: (item, monitor) => {
         if (previewMode || !node) return false;
-        if (item.id === id) return false;
+        if (monitor.getItemType() === DND_NEW_ICON_TYPE) {
+          return Boolean(item.iconName);
+        }
+        if (!item.id || item.id === id) return false;
         if (isDescendantOrSelf(nodes, id, item.id)) return false;
         return true;
       },
@@ -123,7 +137,8 @@ export const CanvasNode = memo(function CanvasNode({
           setDropPosition(null);
           return;
         }
-        if (item.id === id || isDescendantOrSelf(nodes, id, item.id)) {
+        const isNewIcon = monitor.getItemType() === DND_NEW_ICON_TYPE;
+        if (!isNewIcon && (!item.id || item.id === id || isDescendantOrSelf(nodes, id, item.id))) {
           setDropPosition(null);
           return;
         }
@@ -140,7 +155,10 @@ export const CanvasNode = memo(function CanvasNode({
       },
       drop: (item, monitor) => {
         if (monitor.didDrop() || !node) return;
-        if (item.id === id || isDescendantOrSelf(nodes, id, item.id)) return;
+        const isNewIcon = monitor.getItemType() === DND_NEW_ICON_TYPE;
+        if (!isNewIcon && (!item.id || item.id === id || isDescendantOrSelf(nodes, id, item.id))) {
+          return;
+        }
 
         const el = elementRef.current;
         const pos = el
@@ -153,13 +171,17 @@ export const CanvasNode = memo(function CanvasNode({
           : dropPosition || (isContainerNodeType(node.type) ? 'inside' : 'after');
 
         setDropPosition(null);
-        onMoveNode(item.id, id, pos);
+        if (isNewIcon && item.iconName) {
+          onDropNewIcon(item.iconName, id, pos);
+        } else if (item.id) {
+          onMoveNode(item.id, id, pos);
+        }
       },
       collect: (monitor) => ({
         isOverShallow: monitor.isOver({ shallow: true }),
       }),
     }),
-    [id, node, parentNode, nodes, previewMode, dropPosition, onMoveNode]
+    [id, node, parentNode, nodes, previewMode, dropPosition, onMoveNode, onDropNewIcon]
   );
 
   useEffect(() => {
@@ -233,12 +255,19 @@ export const CanvasNode = memo(function CanvasNode({
       : '';
 
   const rootFillClass = isRoot ? 'flex-1' : '';
+  const guideOutlineClass =
+    !previewMode && showGuides
+      ? isRoot
+        ? 'outline-1 outline-dashed outline-indigo-400/75 -outline-offset-2'
+        : 'outline-1 outline-dashed outline-indigo-400/75 -outline-offset-1'
+      : '';
   const baseClassName =
-    `${node.props.className || ''} ${rootFillClass} ${editorOutlineClass} ${hoverDragHandleClass} ${dragStateClass} ${dropIndicatorClass}`.trim();
+    `${node.props.className || ''} ${rootFillClass} ${editorOutlineClass} ${guideOutlineClass} ${hoverDragHandleClass} ${dragStateClass} ${dropIndicatorClass}`.trim();
 
   const dndDataProps = {
     'data-node-id': id,
     'data-node-type': node.type,
+    'data-guides': !previewMode && showGuides ? 'on' : undefined,
     'data-drop-position':
       !previewMode && isOverShallow && dropPosition ? dropPosition : undefined,
   };
@@ -278,8 +307,10 @@ export const CanvasNode = memo(function CanvasNode({
               nodes={nodes}
               selectedId={selectedId}
               previewMode={previewMode}
+              showGuides={showGuides}
               onSelect={onSelect}
               onMoveNode={onMoveNode}
+              onDropNewIcon={onDropNewIcon}
             />
           ))}
         </div>
@@ -357,7 +388,7 @@ export const CanvasNode = memo(function CanvasNode({
         >
           {dragHandle}
           <input
-            className={`${innerClassName} ${editorOutlineClass} ${dropIndicatorClass}`.trim()}
+            className={`${innerClassName} ${editorOutlineClass} ${guideOutlineClass} ${dropIndicatorClass}`.trim()}
             placeholder={node.props.placeholder}
             readOnly
           />
@@ -406,13 +437,31 @@ export const CanvasNode = memo(function CanvasNode({
         >
           {dragHandle}
           <img
-            className={`${innerClassName} ${editorOutlineClass} ${dropIndicatorClass}`.trim()}
+            className={`${innerClassName} ${editorOutlineClass} ${guideOutlineClass} ${dropIndicatorClass}`.trim()}
             src={node.props.src}
             alt={node.name || 'Element graficzny'}
             referrerPolicy="no-referrer"
             onError={() => setImgError(true)}
           />
         </div>
+      );
+    }
+    case 'Icon': {
+      const IconComponent = getLucideIcon(node.props.iconName);
+      const { wrapperClassName, iconClassName } = splitIconClasses(
+        node.props.className
+      );
+      return (
+        <span
+          ref={attachRef}
+          {...dndDataProps}
+          data-icon-name={node.props.iconName || 'Star'}
+          onClick={handleClick}
+          className={`${wrapperClassName} ${editorOutlineClass} ${guideOutlineClass} ${hoverDragHandleClass} ${dragStateClass} ${dropIndicatorClass}`.trim()}
+        >
+          {dragHandle}
+          <IconComponent className={iconClassName} aria-hidden="true" />
+        </span>
       );
     }
     default:

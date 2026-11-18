@@ -6,12 +6,14 @@ export type NodeType =
   | 'Button'
   | 'Badge'
   | 'Input'
-  | 'Image';
+  | 'Image'
+  | 'Icon';
 
 export interface NodeProps {
   className?: string;
   placeholder?: string;
   src?: string;
+  iconName?: string;
   [key: string]: string | undefined;
 }
 
@@ -19,6 +21,7 @@ export interface EditorNode {
   id: string;
   type: NodeType;
   name: string;
+  variant?: string;
   content?: string;
   parentId: string | null;
   props: NodeProps;
@@ -34,7 +37,36 @@ export interface HistoryState {
 }
 
 export type ViewportMode = 'desktop' | 'tablet' | 'mobile';
-export type LeftTab = 'components' | 'templates' | 'layers';
+export type LeftTab =
+  | 'components'
+  | 'icons'
+  | 'templates'
+  | 'history'
+  | 'layers';
+
+export interface NodeBlueprint {
+  type: NodeType;
+  name: string;
+  variant?: string;
+  content?: string;
+  props: NodeProps;
+  children?: NodeBlueprint[];
+}
+
+export type ComponentHistoryEventType = 'added' | 'deleted';
+
+export interface ComponentHistoryEntry {
+  historyId: string;
+  eventType: ComponentHistoryEventType;
+  timestamp: number;
+  rootNodeId: string;
+  label: string;
+  nodeType: NodeType;
+  variant?: string;
+  classNameSummary: string;
+  nodeCount: number;
+  snapshot: NodeBlueprint;
+}
 
 export type ThemeVarCategory = 'color' | 'fontSize';
 
@@ -46,3 +78,11 @@ export interface ThemeVariable {
   category: ThemeVarCategory;
 }
 
+export interface SeoMetadata {
+  title: string;
+  description: string;
+  canonicalUrl: string;
+}
+
+export const DND_ITEM_TYPE = 'CANVAS_NODE' as const;
+export const DND_NEW_ICON_TYPE = 'NEW_ICON' as const;

@@ -506,6 +506,427 @@ test('buildThemeCssRules emits :root CSS variables and escaped Tailwind arbitrar
   assert.ok(css.includes('.text-\\[length\\:var\\(--font-size-title\\)\\] { font-size: var(--font-size-title); }'));
 });
 
+test('getNodeBreadcrumbPath returns ordered hierarchy from root to selected node', async () => {
+  const { getNodeBreadcrumbPath } = await import('./editorLogic.ts');
+
+  const btnPath = getNodeBreadcrumbPath(INITIAL_NODES, 'btn-1');
+  assert.deepEqual(
+    btnPath.map((n) => n.id),
+    ['root', 'hero-1', 'btn-1']
+  );
+
+  const rootPath = getNodeBreadcrumbPath(INITIAL_NODES, 'root');
+  assert.deepEqual(
+    rootPath.map((n) => n.id),
+    ['root']
+  );
+
+  // Unknown id safely falls back to root
+  const fallbackPath = getNodeBreadcrumbPath(INITIAL_NODES, 'missing-id');
+  assert.deepEqual(
+    fallbackPath.map((n) => n.id),
+    ['root']
+  );
+});
+
+test('generateNodeJSXSnippet renders scoped JSX for selected subtree', async () => {
+  const { generateNodeJSXSnippet } = await import('./editorLogic.ts');
+
+  const btnSnippet = generateNodeJSXSnippet(INITIAL_NODES, 'btn-1');
+  assert.equal(
+    btnSnippet,
+    '<button type="button" className="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm shadow-sm">Rozpocznij projekt</button>'
+  );
+
+  const heroSnippet = generateNodeJSXSnippet(INITIAL_NODES, 'hero-1');
+  assert.ok(heroSnippet.startsWith('<div className="p-8 bg-slate-50'));
+  assert.ok(heroSnippet.includes('  <span '));
+  assert.ok(heroSnippet.endsWith('</div>'));
+  assert.equal(generateNodeJSXSnippet(INITIAL_NODES, 'non-existent'), '');
+});
+
+test('removeTailwindTokenAt strips only the targeted token index', async () => {
+  const { removeTailwindTokenAt } = await import('./editorLogic.ts');
+  assert.equal(
+    removeTailwindTokenAt('p-8 bg-slate-50 rounded-2xl', 1),
+    'p-8 rounded-2xl'
+  );
+  assert.equal(removeTailwindTokenAt('p-8', 5), 'p-8');
+});
+
+test('parseNodesJson validates structure and catches malformed or dangling trees', async () => {
+  const { parseNodesJson } = await import('./editorLogic.ts');
+
+  const validRes = parseNodesJson(JSON.stringify(INITIAL_NODES));
+  assert.equal(validRes.ok, true);
+  if (validRes.ok) {
+    assert.equal(validRes.nodes.root.id, 'root');
+  }
+
+  const invalidSyntax = parseNodesJson('{bad json');
+  assert.equal(invalidSyntax.ok, false);
+
+  const missingRoot = parseNodesJson(JSON.stringify({ other: INITIAL_NODES['btn-1'] }));
+  assert.equal(missingRoot.ok, false);
+
+  const danglingChild = parseNodesJson(
+    JSON.stringify({
+      root: { ...INITIAL_NODES.root, children: ['does-not-exist'] },
+    })
+  );
+  assert.equal(danglingChild.ok, false);
+});
+
+test('insertIconNodeAtTarget and addIconNodeToTree insert Icon nodes and export Lucide JSX', async () => {
+  const {
+    addIconNodeToTree,
+    generateNodeJSXSnippet,
+    insertIconNodeAtTarget,
+    parseNodesJson,
+    splitIconClasses,
+  } = await import('./editorLogic.ts');
+
+  // Drop before btn-1 inside hero-1
+  const dropped = insertIconNodeAtTarget(
+    INITIAL_NODES,
+    'Rocket',
+    'btn-1',
+    'before',
+    () => 'icon-1'
+  );
+  assert.equal(dropped.createdId, 'icon-1');
+  assert.equal(dropped.nodes['icon-1']?.type, 'Icon');
+  assert.equal(dropped.nodes['icon-1']?.props.iconName, 'Rocket');
+  assert.equal(dropped.nodes['icon-1']?.parentId, 'hero-1');
+  assert.deepEqual(dropped.nodes['hero-1']?.children, [
+    'badge-1',
+    'heading-1',
+    'text-1',
+    'icon-1',
+    'btn-1',
+  ]);
+
+  // Click-to-add adds into selected parent container
+  const clicked = addIconNodeToTree(
+    dropped.nodes,
+    'hero-1',
+    'Sparkles',
+    () => 'icon-2'
+  );
+  assert.equal(clicked.createdId, 'icon-2');
+  assert.equal(clicked.nodes['icon-2']?.props.iconName, 'Sparkles');
+
+  // JSX export includes lucide-react import and <Rocket ... />
+  const fullJsx = generateReactJSX(clicked.nodes);
+  assert.ok(fullJsx.includes("import { Rocket, Sparkles } from 'lucide-react';"));
+  assert.ok(fullJsx.includes('<Rocket className="w-6 h-6 text-slate-700" />'));
+  assert.equal(
+    generateNodeJSXSnippet(clicked.nodes, 'icon-1'),
+    '<Rocket className="w-6 h-6 text-slate-700" />'
+  );
+
+  // parseNodesJson accepts Icon nodes
+  const parsed = parseNodesJson(JSON.stringify(clicked.nodes));
+  assert.equal(parsed.ok, true);
+
+  // splitIconClasses separates svg dimensions from wrapper styles
+  const split = splitIconClasses('w-8 h-8 p-2 bg-blue-50 text-blue-600 rounded-xl');
+  assert.equal(split.iconClassName, 'w-8 h-8');
+  assert.equal(
+    split.wrapperClassName,
+    'inline-flex items-center justify-center w-fit p-2 bg-blue-50 text-blue-600 rounded-xl'
+  );
+});
+
+test('stepZoom and getZoomScaleClass step within bounds and map to Tailwind transform scale classes', async () => {
+  const { DEFAULT_ZOOM, getZoomScaleClass, stepZoom } = await import(
+    './editorLogic.ts'
+  );
+
+  assert.equal(DEFAULT_ZOOM, 1);
+  assert.equal(stepZoom(1, 'in'), 1.1);
+  assert.equal(stepZoom(1, 'out'), 0.9);
+  assert.equal(stepZoom(1.5, 'in'), 1.5);
+  assert.equal(stepZoom(0.5, 'out'), 0.5);
+
+  assert.equal(getZoomScaleClass(1), '[transform:scale(1)]');
+  assert.equal(getZoomScaleClass(1.2), '[transform:scale(1.2)]');
+  assert.equal(getZoomScaleClass(0.7), '[transform:scale(0.7)]');
+});
+
+test('applyNodeVariantInTree switches component variants while preserving unrelated layout tokens', async () => {
+  const { applyNodeVariantInTree, getComponentVariants } = await import(
+    './editorLogic.ts'
+  );
+
+  assert.ok(getComponentVariants('Button').length >= 4);
+  assert.deepEqual(getComponentVariants('Heading'), []);
+
+  // Switch btn-1 from primary to secondary
+  const secondaryNodes = applyNodeVariantInTree(
+    INITIAL_NODES,
+    'btn-1',
+    'secondary'
+  );
+  const secBtn = secondaryNodes['btn-1'];
+  assert.equal(secBtn?.variant, 'secondary');
+  assert.ok(secBtn?.props.className?.includes('bg-slate-100'));
+  assert.ok(secBtn?.props.className?.includes('text-slate-900'));
+  assert.ok(!secBtn?.props.className?.includes('bg-blue-600'));
+  assert.ok(!secBtn?.props.className?.includes('text-white'));
+  // Preserves padding, radius, and font size
+  assert.ok(secBtn?.props.className?.includes('px-5'));
+  assert.ok(secBtn?.props.className?.includes('py-2.5'));
+  assert.ok(secBtn?.props.className?.includes('rounded-lg'));
+  assert.ok(secBtn?.props.className?.includes('text-sm'));
+
+  // Switch badge-1 from info to warning
+  const warningNodes = applyNodeVariantInTree(
+    secondaryNodes,
+    'badge-1',
+    'warning'
+  );
+  assert.equal(warningNodes['badge-1']?.variant, 'warning');
+  assert.ok(warningNodes['badge-1']?.props.className?.includes('bg-amber-100'));
+  assert.ok(!warningNodes['badge-1']?.props.className?.includes('bg-blue-100'));
+});
+
+test('generateReactJSX includes SEO title, meta description, and canonical URL when configured', async () => {
+  const { generateReactJSX, parseNodesJson, serializeNodesToJson } = await import(
+    './editorLogic.ts'
+  );
+
+  const jsxWithSeo = generateReactJSX(INITIAL_NODES, {
+    title: 'Landing Page',
+    description: 'Nowoczesny interfejs w React',
+    canonicalUrl: 'https://example.com/landing',
+  });
+
+  assert.ok(jsxWithSeo.includes('<>'));
+  assert.ok(jsxWithSeo.includes('<title>Landing Page</title>'));
+  assert.ok(
+    jsxWithSeo.includes(
+      '<meta name="description" content="Nowoczesny interfejs w React" />'
+    )
+  );
+  assert.ok(
+    jsxWithSeo.includes(
+      '<link rel="canonical" href="https://example.com/landing" />'
+    )
+  );
+  assert.ok(jsxWithSeo.includes('</>'));
+
+  const json = serializeNodesToJson(INITIAL_NODES);
+  const roundTrip = parseNodesJson(json);
+  assert.equal(roundTrip.ok, true);
+  if (roundTrip.ok) {
+    assert.equal(roundTrip.nodes['btn-1']?.content, 'Rozpocznij projekt');
+  }
+});
+
+test('Alignment quick-action helpers pin and center elements accurately across flex-col, flex-row, and grid parents', async () => {
+  const {
+    centerNodeInParent,
+    clearNodeAlignment,
+    detectParentLayoutKind,
+    getNodeAlignmentState,
+    setNodeHorizontalAlignment,
+    setNodeVerticalAlignment,
+    splitOuterLayoutClasses,
+  } = await import('./editorLogic.ts');
+
+  const flexColParent = 'p-8 bg-slate-50 flex flex-col items-start gap-4';
+  const flexRowParent = 'p-4 flex flex-row items-center gap-3';
+  const gridParent = 'grid grid-cols-2 gap-4';
+
+  assert.equal(detectParentLayoutKind(flexColParent), 'flex-col');
+  assert.equal(detectParentLayoutKind(flexRowParent), 'flex-row');
+  assert.equal(detectParentLayoutKind(gridParent), 'grid');
+
+  // flex-col: horizontal uses self-*, vertical uses mt-auto/my-auto/mb-auto
+  const pinnedRightCol = setNodeHorizontalAlignment('px-4 py-2', flexColParent, 'right');
+  assert.ok(pinnedRightCol.includes('self-end'));
+  const pinnedBottomCol = setNodeVerticalAlignment(pinnedRightCol, flexColParent, 'bottom');
+  assert.ok(pinnedBottomCol.includes('self-end'));
+  assert.ok(pinnedBottomCol.includes('mt-auto'));
+  assert.deepEqual(getNodeAlignmentState(pinnedBottomCol, flexColParent), {
+    layoutKind: 'flex-col',
+    horizontal: 'right',
+    vertical: 'bottom',
+  });
+
+  // flex-row: horizontal uses ml-auto/mx-auto/mr-auto without wiping vertical self-*
+  const pinnedTopRow = setNodeVerticalAlignment('px-4 py-2', flexRowParent, 'top');
+  assert.ok(pinnedTopRow.includes('self-start'));
+  const pinnedRightTopRow = setNodeHorizontalAlignment(pinnedTopRow, flexRowParent, 'right');
+  assert.ok(pinnedRightTopRow.includes('self-start'));
+  assert.ok(pinnedRightTopRow.includes('ml-auto'));
+  assert.deepEqual(getNodeAlignmentState(pinnedRightTopRow, flexRowParent), {
+    layoutKind: 'flex-row',
+    horizontal: 'right',
+    vertical: 'top',
+  });
+
+  // grid: horizontal uses justify-self-*, vertical uses self-*
+  const centeredGrid = centerNodeInParent('p-2 bg-white', gridParent);
+  assert.ok(centeredGrid.includes('justify-self-center'));
+  assert.ok(centeredGrid.includes('self-center'));
+  assert.deepEqual(getNodeAlignmentState(centeredGrid, gridParent), {
+    layoutKind: 'grid',
+    horizontal: 'center',
+    vertical: 'middle',
+  });
+
+  // Input/Image outer wrapper preserves alignment classes cleanly
+  const split = splitOuterLayoutClasses(centeredGrid);
+  assert.ok(split.outerClassName.includes('justify-self-center'));
+  assert.ok(split.outerClassName.includes('self-center'));
+
+  // clearNodeAlignment removes all alignment tokens cleanly
+  assert.equal(clearNodeAlignment(centeredGrid), 'p-2 bg-white');
+});
+
+test('Animation class groups toggle and read transition, duration, easing, hover transform, and keyframe classes', async () => {
+  const {
+    HOVER_TRANSFORM_CLASSES,
+    KEYFRAME_ANIMATION_CLASSES,
+    TRANSITION_DURATION_CLASSES,
+    TRANSITION_EASING_CLASSES,
+    TRANSITION_PROPERTY_CLASSES,
+    getTailwindGroupToken,
+  } = await import('./editorLogic.ts');
+
+  let cls = 'px-5 py-2.5 bg-blue-600 text-white rounded-lg transition-colors';
+  assert.equal(
+    getTailwindGroupToken(cls, TRANSITION_PROPERTY_CLASSES),
+    'transition-colors'
+  );
+
+  cls = toggleTailwindGroup(cls, [...TRANSITION_PROPERTY_CLASSES], 'transition-all');
+  cls = toggleTailwindGroup(cls, [...TRANSITION_DURATION_CLASSES], 'duration-300');
+  cls = toggleTailwindGroup(cls, [...TRANSITION_EASING_CLASSES], 'ease-in-out');
+  cls = toggleTailwindGroup(cls, [...HOVER_TRANSFORM_CLASSES], 'hover:scale-105');
+  cls = toggleTailwindGroup(cls, [...KEYFRAME_ANIMATION_CLASSES], 'animate-pulse');
+
+  assert.ok(cls.includes('transition-all'));
+  assert.ok(!cls.includes('transition-colors'));
+  assert.ok(cls.includes('duration-300'));
+  assert.ok(cls.includes('ease-in-out'));
+  assert.ok(cls.includes('hover:scale-105'));
+  assert.ok(cls.includes('animate-pulse'));
+
+  assert.equal(getTailwindGroupToken(cls, TRANSITION_DURATION_CLASSES), 'duration-300');
+  assert.equal(getTailwindGroupToken(cls, TRANSITION_EASING_CLASSES), 'ease-in-out');
+  assert.equal(getTailwindGroupToken(cls, HOVER_TRANSFORM_CLASSES), 'hover:scale-105');
+  assert.equal(getTailwindGroupToken(cls, KEYFRAME_ANIMATION_CLASSES), 'animate-pulse');
+});
+
+test('Component History utilities capture added/deleted custom subtrees and reinsert them accurately', async () => {
+  const {
+    addCardPresetToTree,
+    applyNodeVariantInTree,
+    createComponentHistoryEntry,
+    deleteNodeFromTree,
+    filterComponentHistory,
+    prependComponentHistory,
+    refreshAddedComponentHistoryEntry,
+    reinsertComponentFromHistory,
+    updateNodeInTree,
+  } = await import('./editorLogic.ts');
+
+  // Add a custom card preset and customize its button
+  let seq = 1;
+  const added = addCardPresetToTree(INITIAL_NODES, 'root', () => `card_${seq++}`);
+  assert.ok(added.createdId);
+  const addedEntry = createComponentHistoryEntry(
+    added.nodes,
+    added.createdId,
+    'added',
+    () => 'hist_1',
+    1000
+  );
+  assert.ok(addedEntry);
+  assert.equal(addedEntry.eventType, 'added');
+  assert.equal(addedEntry.nodeCount, 5); // Card + 4 children
+
+  // Customize card name + variant and refresh its added history entry
+  let modifiedNodes = updateNodeInTree(added.nodes, added.createdId, 'name', 'Custom Promo Card');
+  modifiedNodes = applyNodeVariantInTree(modifiedNodes, added.createdId, 'dark');
+  let historyList = prependComponentHistory([], addedEntry);
+  historyList = refreshAddedComponentHistoryEntry(
+    historyList,
+    modifiedNodes,
+    added.createdId,
+    2000
+  );
+  assert.equal(historyList[0]?.label, 'Custom Promo Card');
+  assert.equal(historyList[0]?.variant, 'dark');
+  assert.ok(historyList[0]?.snapshot.props.className?.includes('bg-slate-900'));
+
+  // Capture deleted custom subtree (e.g. btn-1 customized)
+  const customBtnNodes = updateNodeInTree(modifiedNodes, 'btn-1', 'content', 'Start Free');
+  const deletedEntry = createComponentHistoryEntry(
+    customBtnNodes,
+    'btn-1',
+    'deleted',
+    () => 'hist_2',
+    3000
+  );
+  assert.ok(deletedEntry);
+  historyList = prependComponentHistory(historyList, deletedEntry);
+  const afterDelete = deleteNodeFromTree(customBtnNodes, 'btn-1');
+  assert.equal(afterDelete.nodes['btn-1'], undefined);
+
+  // Filter added vs deleted
+  assert.equal(filterComponentHistory(historyList, 'all').length, 2);
+  assert.equal(filterComponentHistory(historyList, 'added').length, 1);
+  assert.equal(filterComponentHistory(historyList, 'deleted').length, 1);
+
+  // Reinsert deleted custom button back into canvas
+  const reinserted = reinsertComponentFromHistory(
+    afterDelete.nodes,
+    'hero-1',
+    deletedEntry,
+    () => `re_${seq++}`
+  );
+  assert.ok(reinserted.createdId);
+  const restoredBtn = reinserted.nodes[reinserted.createdId];
+  assert.equal(restoredBtn?.type, 'Button');
+  assert.equal(restoredBtn?.content, 'Start Free');
+  assert.equal(restoredBtn?.variant, 'primary');
+  assert.equal(restoredBtn?.parentId, 'hero-1');
+});
+
+test('PDF export helpers sanitize filenames and compute aspect-preserving A4 geometry', async () => {
+  const { buildPdfFileName, computePdfPageGeometry } = await import('./pdfExport.ts');
+
+  assert.equal(buildPdfFileName(''), 'react-ui-studio-canvas.pdf');
+  assert.equal(
+    buildPdfFileName('Ładna Strona | Landing Page 2026!'),
+    'ladna-strona-landing-page-2026.pdf'
+  );
+
+  // Wide canvas -> landscape A4
+  const wide = computePdfPageGeometry(1200, 600);
+  assert.equal(wide.orientation, 'landscape');
+  assert.equal(wide.pageWidthMm, 297);
+  assert.equal(wide.pageHeightMm, 210);
+  assert.ok(wide.drawWidthMm <= 277.01);
+  assert.ok(Math.abs(wide.drawWidthMm / wide.drawHeightMm - 2) < 0.01);
+
+  // Tall canvas -> portrait A4
+  const tall = computePdfPageGeometry(500, 1000);
+  assert.equal(tall.orientation, 'portrait');
+  assert.equal(tall.pageWidthMm, 210);
+  assert.equal(tall.pageHeightMm, 297);
+  assert.ok(tall.drawHeightMm <= 277.01);
+  assert.ok(Math.abs(tall.drawWidthMm / tall.drawHeightMm - 0.5) < 0.01);
+});
+
+
+
+
+
 
 
 

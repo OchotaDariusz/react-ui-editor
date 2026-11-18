@@ -24,9 +24,14 @@ export const LayerTreeItem = memo(function LayerTreeItem({
   const hasChildren = Boolean(node.children && node.children.length > 0);
   const isSelected = selectedId === id;
   const label = node.name.trim() || node.type;
-  const metadata = hasChildren
-    ? `${node.type} · ${node.children.length}`
-    : node.type;
+  const metaParts: string[] = [node.type];
+  if (node.variant) {
+    metaParts.push(node.variant);
+  }
+  if (hasChildren) {
+    metaParts.push(String(node.children.length));
+  }
+  const metadata = metaParts.join(' · ');
 
   return (
     <div>

@@ -1,13 +1,22 @@
 import type {
   EditorNode,
-  NodeProps,
+  NodeBlueprint,
   NodesMap,
   NodeType,
+  SeoMetadata,
   ThemeVariable,
 } from '../types/editor';
 
 export const STORAGE_KEY = 'react_ui_editor_state_v2';
 export const THEME_STORAGE_KEY = 'react_ui_editor_theme_v1';
+export const SEO_STORAGE_KEY = 'react_ui_editor_seo_v1';
+export const COMPONENT_HISTORY_STORAGE_KEY = 'react_ui_editor_comp_history_v1';
+
+export const DEFAULT_SEO_METADATA: SeoMetadata = {
+  title: '',
+  description: '',
+  canonicalUrl: '',
+};
 
 export const DEFAULT_THEME_VARS: ThemeVariable[] = [
   {
@@ -47,6 +56,108 @@ export const DEFAULT_THEME_VARS: ThemeVariable[] = [
   },
 ];
 
+export interface ComponentVariantOption {
+  id: string;
+  label: string;
+  classes: string;
+}
+
+export const COMPONENT_VARIANTS: Partial<Record<NodeType, ComponentVariantOption[]>> = {
+  Button: [
+    {
+      id: 'primary',
+      label: 'Primary',
+      classes: 'bg-blue-600 text-white hover:bg-blue-700 border border-transparent shadow-sm',
+    },
+    {
+      id: 'secondary',
+      label: 'Secondary',
+      classes: 'bg-slate-100 text-slate-900 hover:bg-slate-200 border border-slate-200',
+    },
+    {
+      id: 'outline',
+      label: 'Outline',
+      classes: 'bg-white text-slate-800 hover:bg-slate-50 border border-slate-300',
+    },
+    {
+      id: 'ghost',
+      label: 'Ghost',
+      classes: 'bg-transparent text-slate-700 hover:bg-slate-100 border border-transparent',
+    },
+    {
+      id: 'destructive',
+      label: 'Destructive',
+      classes: 'bg-red-600 text-white hover:bg-red-700 border border-transparent shadow-sm',
+    },
+  ],
+  Badge: [
+    {
+      id: 'info',
+      label: 'Info',
+      classes: 'bg-blue-100 text-blue-700',
+    },
+    {
+      id: 'success',
+      label: 'Success',
+      classes: 'bg-emerald-100 text-emerald-700',
+    },
+    {
+      id: 'warning',
+      label: 'Warning',
+      classes: 'bg-amber-100 text-amber-800',
+    },
+    {
+      id: 'neutral',
+      label: 'Neutral',
+      classes: 'bg-slate-100 text-slate-700',
+    },
+    {
+      id: 'danger',
+      label: 'Danger',
+      classes: 'bg-red-100 text-red-700',
+    },
+  ],
+  Container: [
+    {
+      id: 'default',
+      label: 'Default',
+      classes: 'bg-white border border-slate-200',
+    },
+    {
+      id: 'subtle',
+      label: 'Subtle',
+      classes: 'bg-slate-50 border border-slate-200',
+    },
+    {
+      id: 'card',
+      label: 'Card',
+      classes: 'bg-white border border-slate-200 shadow-md',
+    },
+    {
+      id: 'dark',
+      label: 'Dark',
+      classes: 'bg-slate-900 text-white border border-slate-800',
+    },
+  ],
+  Input: [
+    {
+      id: 'default',
+      label: 'Default',
+      classes: 'bg-white border border-slate-300 focus:ring-blue-500',
+    },
+    {
+      id: 'filled',
+      label: 'Filled',
+      classes: 'bg-slate-100 border border-transparent focus:bg-white focus:ring-blue-500',
+    },
+    {
+      id: 'error',
+      label: 'Error',
+      classes: 'bg-red-50 border border-red-400 focus:ring-red-500',
+    },
+  ],
+};
+
 export const INITIAL_NODES: NodesMap = {
   root: {
     id: 'root',
@@ -62,6 +173,7 @@ export const INITIAL_NODES: NodesMap = {
     id: 'hero-1',
     type: 'Container',
     name: 'Hero Section',
+    variant: 'subtle',
     parentId: 'root',
     props: {
       className:
@@ -73,6 +185,7 @@ export const INITIAL_NODES: NodesMap = {
     id: 'badge-1',
     type: 'Badge',
     name: 'Badge',
+    variant: 'info',
     content: 'Nowa Wersja 2.0',
     parentId: 'hero-1',
     props: {
@@ -108,6 +221,7 @@ export const INITIAL_NODES: NodesMap = {
     id: 'btn-1',
     type: 'Button',
     name: 'Przycisk CTA',
+    variant: 'primary',
     content: 'Rozpocznij projekt',
     parentId: 'hero-1',
     props: {
@@ -125,6 +239,7 @@ export const ELEMENT_TEMPLATES: Record<
   Container: {
     type: 'Container',
     name: 'Kontener',
+    variant: 'default',
     props: {
       className:
         'p-4 bg-white border border-dashed border-slate-300 min-h-[80px] flex flex-col gap-3 rounded-lg',
@@ -157,6 +272,7 @@ export const ELEMENT_TEMPLATES: Record<
   Button: {
     type: 'Button',
     name: 'Przycisk',
+    variant: 'primary',
     content: 'Kliknij mnie',
     props: {
       className:
@@ -167,6 +283,7 @@ export const ELEMENT_TEMPLATES: Record<
   Badge: {
     type: 'Badge',
     name: 'Odznaka',
+    variant: 'success',
     content: 'Status',
     props: {
       className:
@@ -177,6 +294,7 @@ export const ELEMENT_TEMPLATES: Record<
   Input: {
     type: 'Input',
     name: 'Pole tekstowe',
+    variant: 'default',
     props: {
       className:
         'border border-slate-300 px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-full text-sm',
@@ -193,15 +311,18 @@ export const ELEMENT_TEMPLATES: Record<
     },
     children: [],
   },
+  Icon: {
+    type: 'Icon',
+    name: 'Ikona',
+    props: {
+      className: 'w-6 h-6 text-slate-700',
+      iconName: 'Star',
+    },
+    children: [],
+  },
 };
 
-export interface TemplateBlueprintNode {
-  type: NodeType;
-  name: string;
-  content?: string;
-  props: NodeProps;
-  children?: TemplateBlueprintNode[];
-}
+export type TemplateBlueprintNode = NodeBlueprint;
 
 export interface PageTemplateDefinition {
   id: string;

@@ -1,11 +1,17 @@
 import {
+  COMPONENT_VARIANTS,
   ELEMENT_TEMPLATES,
+  type ComponentVariantOption,
   type TemplateBlueprintNode,
 } from '../constants/editorDefaults';
 import type {
+  ComponentHistoryEntry,
+  ComponentHistoryEventType,
   EditorNode,
+  NodeBlueprint,
   NodesMap,
   NodeType,
+  SeoMetadata,
   ThemeVariable,
 } from '../types/editor';
 
@@ -372,55 +378,122 @@ export const deleteNodeFromTree = (
 
 const escapeAttr = (value: string): string => value.replace(/"/g, '&quot;');
 
-export const generateReactJSX = (nodes: NodesMap): string => {
-  const buildNodeJSX = (id: string, indent = '    '): string => {
-    const node = nodes[id];
-    if (!node) return '';
-    const props = node.props || {};
-    const cleanClass = (props.className || '').replace(/\s+/g, ' ').trim();
-    let propsStr = cleanClass ? ` className="${escapeAttr(cleanClass)}"` : '';
+const buildNodeJSX = (
+  nodes: NodesMap,
+  id: string,
+  indent = '    '
+): string => {
+  const node = nodes[id];
+  if (!node) return '';
+  const props = node.props || {};
+  const cleanClass = (props.className || '').replace(/\s+/g, ' ').trim();
+  let propsStr = cleanClass ? ` className="${escapeAttr(cleanClass)}"` : '';
 
-    if (node.type === 'Input' && props.placeholder) {
-      propsStr += ` placeholder="${escapeAttr(props.placeholder)}"`;
-    }
-    if (node.type === 'Image' && props.src) {
-      propsStr += ` src="${escapeAttr(props.src)}" alt="${escapeAttr(
-        node.name || 'image'
-      )}"`;
-    }
+  if (node.type === 'Input' && props.placeholder) {
+    propsStr += ` placeholder="${escapeAttr(props.placeholder)}"`;
+  }
+  if (node.type === 'Image' && props.src) {
+    propsStr += ` src="${escapeAttr(props.src)}" alt="${escapeAttr(
+      node.name || 'image'
+    )}"`;
+  }
 
-    if (isContainerNodeType(node.type)) {
-      if (node.children.length === 0) return `${indent}<div${propsStr} />\n`;
-      const inner = node.children
-        .map((cId) => buildNodeJSX(cId, indent + '  '))
-        .join('');
-      return `${indent}<div${propsStr}>\n${inner}${indent}</div>\n`;
-    }
-    if (node.type === 'Heading') {
-      return `${indent}<h2${propsStr}>${node.content || ''}</h2>\n`;
-    }
-    if (node.type === 'Text') {
-      return `${indent}<p${propsStr}>${node.content || ''}</p>\n`;
-    }
-    if (node.type === 'Badge') {
-      return `${indent}<span${propsStr}>${node.content || ''}</span>\n`;
-    }
-    if (node.type === 'Button') {
-      return `${indent}<button type="button"${propsStr}>${node.content || ''}</button>\n`;
-    }
-    if (node.type === 'Input') {
-      return `${indent}<input${propsStr} />\n`;
-    }
-    if (node.type === 'Image') {
-      return `${indent}<img${propsStr} />\n`;
-    }
-    return '';
-  };
+  if (isContainerNodeType(node.type)) {
+    if (node.children.length === 0) return `${indent}<div${propsStr} />\n`;
+    const inner = node.children
+      .map((cId) => buildNodeJSX(nodes, cId, indent + '  '))
+      .join('');
+    return `${indent}<div${propsStr}>\n${inner}${indent}</div>\n`;
+  }
+  if (node.type === 'Heading') {
+    return `${indent}<h2${propsStr}>${node.content || ''}</h2>\n`;
+  }
+  if (node.type === 'Text') {
+    return `${indent}<p${propsStr}>${node.content || ''}</p>\n`;
+  }
+  if (node.type === 'Badge') {
+    return `${indent}<span${propsStr}>${node.content || ''}</span>\n`;
+  }
+  if (node.type === 'Button') {
+    return `${indent}<button type="button"${propsStr}>${node.content || ''}</button>\n`;
+  }
+  if (node.type === 'Input') {
+    return `${indent}<input${propsStr} />\n`;
+  }
+  if (node.type === 'Image') {
+    return `${indent}<img${propsStr} />\n`;
+  }
+  if (node.type === 'Icon') {
+    const iconTag = (props.iconName || 'Star').replace(/[^A-Za-z0-9_]/g, '') || 'Star';
+    return `${indent}<${iconTag}${propsStr} />\n`;
+  }
+  return '';
+};
 
-  return `import React from 'react';\n\nexport default function GeneratedUI() {\n  return (\n${buildNodeJSX(
-    'root'
+const collectUsedIconNames = (nodes: NodesMap): string[] => {
+  const names = new Set<string>();
+  for (const node of Object.values(nodes)) {
+    if (node.type === 'Icon') {
+      const clean = (node.props?.iconName || 'Star').replace(/[^A-Za-z0-9_]/g, '');
+      if (clean) names.add(clean);
+    }
+  }
+  return Array.from(names).sort();
+};
+
+const escapeHtmlText = (value: string): string =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+export const generateReactJSX = (
+  nodes: NodesMap,
+  seo?: SeoMetadata
+): string => {
+  const iconNames = collectUsedIconNames(nodes);
+  const iconImport =
+    iconNames.length > 0
+      ? `import { ${iconNames.join(', ')} } from 'lucide-react';\n`
+      : '';
+
+  const seoLines: string[] = [];
+  const cleanTitle = seo?.title?.trim();
+  const cleanDesc = seo?.description?.trim();
+  const cleanCanonical = seo?.canonicalUrl?.trim();
+
+  if (cleanTitle) {
+    seoLines.push(`      <title>${escapeHtmlText(cleanTitle)}</title>`);
+  }
+  if (cleanDesc) {
+    seoLines.push(
+      `      <meta name="description" content="${escapeAttr(cleanDesc)}" />`
+    );
+  }
+  if (cleanCanonical) {
+    seoLines.push(
+      `      <link rel="canonical" href="${escapeAttr(cleanCanonical)}" />`
+    );
+  }
+
+  if (seoLines.length > 0) {
+    const rootMarkup = buildNodeJSX(nodes, 'root', '      ');
+    return `import React from 'react';\n${iconImport}\nexport default function GeneratedUI() {\n  return (\n    <>\n${seoLines.join(
+      '\n'
+    )}\n${rootMarkup}    </>\n  );\n}\n`;
+  }
+
+  return `import React from 'react';\n${iconImport}\nexport default function GeneratedUI() {\n  return (\n${buildNodeJSX(
+    nodes,
+    'root',
+    '    '
   )}  );\n}\n`;
 };
+
+export const serializeNodesToJson = (nodes: NodesMap): string =>
+  JSON.stringify(nodes, null, 2);
+
+export const generateNodeJSXSnippet = (
+  nodes: NodesMap,
+  nodeId: string
+): string => buildNodeJSX(nodes, nodeId, '').trimEnd();
 
 export interface SearchableComponent {
   type: string;
@@ -762,6 +835,7 @@ export const insertPageTemplateIntoTree = (
       id: newId,
       type: bp.type,
       name: bp.name,
+      ...(bp.variant !== undefined ? { variant: bp.variant } : {}),
       ...(bp.content !== undefined ? { content: bp.content } : {}),
       parentId,
       props: { ...bp.props },
@@ -812,6 +886,715 @@ export const buildThemeCssRules = (themeVars: ThemeVariable[]): string => {
 
   return `:root {\n${rootDeclarations.join('\n')}\n}\n${utilityRules.join('\n')}`;
 };
+
+export const getNodeBreadcrumbPath = (
+  nodes: NodesMap,
+  selectedId: string
+): EditorNode[] => {
+  const path: EditorNode[] = [];
+  const visited = new Set<string>();
+  let currId: string | null | undefined = nodes[selectedId] ? selectedId : 'root';
+
+  while (currId && nodes[currId] && !visited.has(currId)) {
+    visited.add(currId);
+    const node: EditorNode = nodes[currId];
+    path.push(node);
+    currId = node.parentId;
+  }
+
+  return path.reverse();
+};
+
+export const removeTailwindTokenAt = (
+  className = '',
+  indexToRemove: number
+): string => {
+  const tokens = className.split(/\s+/).filter(Boolean);
+  if (indexToRemove < 0 || indexToRemove >= tokens.length) {
+    return tokens.join(' ');
+  }
+  return tokens.filter((_, idx) => idx !== indexToRemove).join(' ');
+};
+
+const VALID_NODE_TYPES = new Set<NodeType>([
+  'Container',
+  'Grid',
+  'Heading',
+  'Text',
+  'Button',
+  'Badge',
+  'Input',
+  'Image',
+  'Icon',
+]);
+
+export const parseNodesJson = (
+  jsonText: string
+): { ok: true; nodes: NodesMap } | { ok: false; error: string } => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return { ok: false, error: 'Nieprawidłowy format JSON.' };
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, error: 'Drzewo JSON musi być obiektem mapy węzłów.' };
+  }
+
+  const candidate = parsed as Record<string, unknown>;
+  if (!candidate.root || typeof candidate.root !== 'object') {
+    return { ok: false, error: 'Brak wymaganej gałęzi głównej "root".' };
+  }
+
+  for (const [key, val] of Object.entries(candidate)) {
+    if (!val || typeof val !== 'object' || Array.isArray(val)) {
+      return { ok: false, error: `Nieprawidłowa struktura węzła "${key}".` };
+    }
+    const node = val as Partial<EditorNode>;
+    if (typeof node.id !== 'string' || node.id !== key) {
+      return { ok: false, error: `Węzeł "${key}" ma niezgodne pole "id".` };
+    }
+    if (!node.type || !VALID_NODE_TYPES.has(node.type)) {
+      return {
+        ok: false,
+        error: `Węzeł "${key}" ma nieobsługiwany typ "${String(node.type)}".`,
+      };
+    }
+    if (!node.props || typeof node.props !== 'object' || Array.isArray(node.props)) {
+      return { ok: false, error: `Węzeł "${key}" musi zawierać obiekt "props".` };
+    }
+    if (!Array.isArray(node.children)) {
+      return {
+        ok: false,
+        error: `Węzeł "${key}" musi zawierać tablicę "children".`,
+      };
+    }
+    for (const childId of node.children) {
+      if (typeof childId !== 'string' || !candidate[childId]) {
+        return {
+          ok: false,
+          error: `Węzeł "${key}" odwołuje się do nieistniejącego dziecka "${String(
+            childId
+          )}".`,
+        };
+      }
+    }
+  }
+
+  return { ok: true, nodes: candidate as NodesMap };
+};
+
+export const addIconNodeToTree = (
+  prev: NodesMap,
+  selectedId: string,
+  iconName: string,
+  idFactory: () => string = generateId
+): { nodes: NodesMap; createdId: string | null } => {
+  const targetParentId = resolveTargetParentId(prev, selectedId);
+  const parent = prev[targetParentId];
+  if (!parent) return { nodes: prev, createdId: null };
+
+  const newId = idFactory();
+  const newNode: EditorNode = {
+    id: newId,
+    type: 'Icon',
+    name: iconName,
+    parentId: targetParentId,
+    props: {
+      className: 'w-6 h-6 text-slate-700',
+      iconName,
+    },
+    children: [],
+  };
+
+  return {
+    createdId: newId,
+    nodes: {
+      ...prev,
+      [newId]: newNode,
+      [targetParentId]: {
+        ...parent,
+        children: [...parent.children, newId],
+      },
+    },
+  };
+};
+
+export const insertIconNodeAtTarget = (
+  prev: NodesMap,
+  iconName: string,
+  targetId: string,
+  position: DropPosition,
+  idFactory: () => string = generateId
+): { nodes: NodesMap; createdId: string | null } => {
+  const targetNode = prev[targetId];
+  if (!targetNode) return { nodes: prev, createdId: null };
+
+  let targetParentId: string;
+  if (position === 'inside') {
+    if (!isContainerNodeType(targetNode.type)) return { nodes: prev, createdId: null };
+    targetParentId = targetId;
+  } else {
+    if (!targetNode.parentId) return { nodes: prev, createdId: null };
+    targetParentId = targetNode.parentId;
+  }
+
+  const targetParent = prev[targetParentId];
+  if (!targetParent || !isContainerNodeType(targetParent.type)) {
+    return { nodes: prev, createdId: null };
+  }
+
+  const newId = idFactory();
+  const newNode: EditorNode = {
+    id: newId,
+    type: 'Icon',
+    name: iconName,
+    parentId: targetParentId,
+    props: {
+      className: 'w-6 h-6 text-slate-700',
+      iconName,
+    },
+    children: [],
+  };
+
+  const nextChildren = [...targetParent.children];
+  if (position === 'inside') {
+    nextChildren.push(newId);
+  } else {
+    const idx = nextChildren.indexOf(targetId);
+    if (idx === -1) return { nodes: prev, createdId: null };
+    nextChildren.splice(position === 'before' ? idx : idx + 1, 0, newId);
+  }
+
+  return {
+    createdId: newId,
+    nodes: {
+      ...prev,
+      [newId]: newNode,
+      [targetParentId]: {
+        ...targetParent,
+        children: nextChildren,
+      },
+    },
+  };
+};
+
+const ICON_SVG_TOKEN_RE = /^(?:w-|h-|size-|stroke-)/;
+
+export const splitIconClasses = (
+  className = ''
+): { wrapperClassName: string; iconClassName: string } => {
+  const tokens = className.split(/\s+/).filter(Boolean);
+  const wrapperTokens: string[] = [];
+  const iconTokens: string[] = [];
+  let hasSizeToken = false;
+
+  for (const token of tokens) {
+    if (ICON_SVG_TOKEN_RE.test(token)) {
+      iconTokens.push(token);
+      if (/^(?:w-|h-|size-)/.test(token)) {
+        hasSizeToken = true;
+      }
+    } else {
+      wrapperTokens.push(token);
+    }
+  }
+
+  if (!hasSizeToken) {
+    iconTokens.unshift('w-6', 'h-6');
+  }
+
+  return {
+    wrapperClassName: `inline-flex items-center justify-center w-fit ${wrapperTokens.join(' ')}`.trim(),
+    iconClassName: iconTokens.join(' '),
+  };
+};
+
+export const ZOOM_LEVELS = [
+  0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5,
+] as const;
+
+export const DEFAULT_ZOOM = 1;
+
+export const stepZoom = (
+  currentZoom: number,
+  direction: 'in' | 'out'
+): number => {
+  const currentIdx = ZOOM_LEVELS.findIndex(
+    (z) => Math.abs(z - currentZoom) < 0.001
+  );
+  const safeIdx = currentIdx === -1 ? ZOOM_LEVELS.indexOf(1) : currentIdx;
+  const nextIdx =
+    direction === 'in'
+      ? Math.min(ZOOM_LEVELS.length - 1, safeIdx + 1)
+      : Math.max(0, safeIdx - 1);
+  return ZOOM_LEVELS[nextIdx];
+};
+
+const ZOOM_SCALE_CLASSES: Record<number, string> = {
+  0.5: '[transform:scale(0.5)]',
+  0.6: '[transform:scale(0.6)]',
+  0.7: '[transform:scale(0.7)]',
+  0.8: '[transform:scale(0.8)]',
+  0.9: '[transform:scale(0.9)]',
+  1: '[transform:scale(1)]',
+  1.1: '[transform:scale(1.1)]',
+  1.2: '[transform:scale(1.2)]',
+  1.3: '[transform:scale(1.3)]',
+  1.4: '[transform:scale(1.4)]',
+  1.5: '[transform:scale(1.5)]',
+};
+
+export const getZoomScaleClass = (zoom: number): string =>
+  ZOOM_SCALE_CLASSES[zoom] || '[transform:scale(1)]';
+
+export const getComponentVariants = (
+  type: NodeType
+): ComponentVariantOption[] => COMPONENT_VARIANTS[type] || [];
+
+export const applyNodeVariantInTree = (
+  prev: NodesMap,
+  selectedId: string,
+  nextVariantId: string
+): NodesMap => {
+  const existing = prev[selectedId];
+  if (!existing) return prev;
+
+  const variants = getComponentVariants(existing.type);
+  if (variants.length === 0) return prev;
+
+  if (!nextVariantId) {
+    if (!existing.variant) return prev;
+    return {
+      ...prev,
+      [selectedId]: {
+        ...existing,
+        variant: undefined,
+      },
+    };
+  }
+
+  const targetVariant = variants.find((v) => v.id === nextVariantId);
+  if (!targetVariant) return prev;
+
+  const allVariantTokens = new Set(
+    variants.flatMap((v) => v.classes.split(/\s+/).filter(Boolean))
+  );
+  const nextVariantTokens = targetVariant.classes.split(/\s+/).filter(Boolean);
+
+  const hasNextBg = nextVariantTokens.some((t) => BG_COLOR_TOKEN_RE.test(t));
+  const hasNextTextColor = nextVariantTokens.some((t) =>
+    isTailwindTextColorToken(t)
+  );
+  const hasNextBorder = nextVariantTokens.some(
+    (t) => t === 'border' || t.startsWith('border-')
+  );
+  const hasNextHoverBg = nextVariantTokens.some((t) =>
+    t.startsWith('hover:bg-')
+  );
+  const hasNextFocusRing = nextVariantTokens.some((t) =>
+    t.startsWith('focus:ring-')
+  );
+
+  const currentTokens = (existing.props.className || '')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const filteredTokens = currentTokens.filter((token) => {
+    if (allVariantTokens.has(token)) return false;
+    if (hasNextBg && BG_COLOR_TOKEN_RE.test(token)) return false;
+    if (hasNextTextColor && isTailwindTextColorToken(token)) return false;
+    if (hasNextHoverBg && token.startsWith('hover:bg-')) return false;
+    if (hasNextFocusRing && token.startsWith('focus:ring-')) return false;
+    if (
+      hasNextBorder &&
+      (token === 'border' || /^border-(?:transparent|slate-|gray-|zinc-|red-|blue-|emerald-|amber-)/.test(token))
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  const mergedClassName = [...filteredTokens, ...nextVariantTokens].join(' ');
+
+  return {
+    ...prev,
+    [selectedId]: {
+      ...existing,
+      variant: nextVariantId,
+      props: {
+        ...existing.props,
+        className: mergedClassName,
+      },
+    },
+  };
+};
+
+export type HorizontalAlign = 'left' | 'center' | 'right';
+export type VerticalAlign = 'top' | 'middle' | 'bottom';
+export type ParentLayoutKind = 'flex-col' | 'flex-row' | 'grid' | 'block';
+
+const SELF_ALIGN_CLASSES = [
+  'self-start',
+  'self-center',
+  'self-end',
+  'self-stretch',
+] as const;
+
+const JUSTIFY_SELF_CLASSES = [
+  'justify-self-start',
+  'justify-self-center',
+  'justify-self-end',
+  'justify-self-stretch',
+] as const;
+
+const HORIZONTAL_MARGIN_AUTO_CLASSES = ['ml-auto', 'mr-auto', 'mx-auto'] as const;
+const VERTICAL_MARGIN_AUTO_CLASSES = ['mt-auto', 'mb-auto', 'my-auto'] as const;
+
+export const ALL_ALIGNMENT_CLASSES = [
+  ...SELF_ALIGN_CLASSES,
+  ...JUSTIFY_SELF_CLASSES,
+  ...HORIZONTAL_MARGIN_AUTO_CLASSES,
+  ...VERTICAL_MARGIN_AUTO_CLASSES,
+] as const;
+
+export const detectParentLayoutKind = (
+  parentClassName = ''
+): ParentLayoutKind => {
+  const tokens = parentClassName.split(/\s+/).filter(Boolean);
+  if (tokens.some((t) => t === 'grid' || t.startsWith('grid-cols-'))) {
+    return 'grid';
+  }
+  if (tokens.includes('flex-col') || tokens.includes('flex-col-reverse')) {
+    return 'flex-col';
+  }
+  if (
+    tokens.includes('flex') ||
+    tokens.includes('flex-row') ||
+    tokens.includes('flex-row-reverse')
+  ) {
+    return 'flex-row';
+  }
+  return 'block';
+};
+
+export const getNodeAlignmentState = (
+  nodeClassName = '',
+  parentClassName = ''
+): {
+  layoutKind: ParentLayoutKind;
+  horizontal: HorizontalAlign | '';
+  vertical: VerticalAlign | '';
+} => {
+  const layoutKind = detectParentLayoutKind(parentClassName);
+  const tokens = nodeClassName.split(/\s+/).filter(Boolean);
+
+  let horizontal: HorizontalAlign | '' = '';
+  let vertical: VerticalAlign | '' = '';
+
+  if (layoutKind === 'flex-col') {
+    for (const token of tokens) {
+      if (token === 'self-start' || token === 'mr-auto') horizontal = 'left';
+      else if (token === 'self-center' || token === 'mx-auto') horizontal = 'center';
+      else if (token === 'self-end' || token === 'ml-auto') horizontal = 'right';
+      else if (token === 'mb-auto') vertical = 'top';
+      else if (token === 'my-auto') vertical = 'middle';
+      else if (token === 'mt-auto') vertical = 'bottom';
+    }
+  } else if (layoutKind === 'grid') {
+    for (const token of tokens) {
+      if (token === 'justify-self-start' || token === 'mr-auto') horizontal = 'left';
+      else if (token === 'justify-self-center' || token === 'mx-auto') horizontal = 'center';
+      else if (token === 'justify-self-end' || token === 'ml-auto') horizontal = 'right';
+      else if (token === 'self-start' || token === 'mb-auto') vertical = 'top';
+      else if (token === 'self-center' || token === 'my-auto') vertical = 'middle';
+      else if (token === 'self-end' || token === 'mt-auto') vertical = 'bottom';
+    }
+  } else if (layoutKind === 'flex-row') {
+    for (const token of tokens) {
+      if (token === 'mr-auto') horizontal = 'left';
+      else if (token === 'mx-auto') horizontal = 'center';
+      else if (token === 'ml-auto') horizontal = 'right';
+      else if (token === 'self-start' || token === 'mb-auto') vertical = 'top';
+      else if (token === 'self-center' || token === 'my-auto') vertical = 'middle';
+      else if (token === 'self-end' || token === 'mt-auto') vertical = 'bottom';
+    }
+  } else {
+    for (const token of tokens) {
+      if (token === 'mr-auto') horizontal = 'left';
+      else if (token === 'mx-auto') horizontal = 'center';
+      else if (token === 'ml-auto') horizontal = 'right';
+      else if (token === 'mb-auto') vertical = 'top';
+      else if (token === 'my-auto') vertical = 'middle';
+      else if (token === 'mt-auto') vertical = 'bottom';
+    }
+  }
+
+  return { layoutKind, horizontal, vertical };
+};
+
+export const setNodeHorizontalAlignment = (
+  nodeClassName = '',
+  parentClassName = '',
+  align: HorizontalAlign | ''
+): string => {
+  const layoutKind = detectParentLayoutKind(parentClassName);
+  const tokens = nodeClassName.split(/\s+/).filter(Boolean);
+
+  const clearSet = new Set<string>([
+    ...JUSTIFY_SELF_CLASSES,
+    ...HORIZONTAL_MARGIN_AUTO_CLASSES,
+    ...(layoutKind === 'flex-col' || layoutKind === 'block' ? SELF_ALIGN_CLASSES : []),
+  ]);
+
+  const filtered = tokens.filter((t) => !clearSet.has(t));
+  if (!align) return filtered.join(' ');
+
+  if (layoutKind === 'flex-col') {
+    const token =
+      align === 'left'
+        ? 'self-start'
+        : align === 'center'
+          ? 'self-center'
+          : 'self-end';
+    filtered.push(token);
+  } else if (layoutKind === 'grid') {
+    const token =
+      align === 'left'
+        ? 'justify-self-start'
+        : align === 'center'
+          ? 'justify-self-center'
+          : 'justify-self-end';
+    filtered.push(token);
+  } else {
+    const token =
+      align === 'left'
+        ? 'mr-auto'
+        : align === 'center'
+          ? 'mx-auto'
+          : 'ml-auto';
+    filtered.push(token);
+  }
+
+  return filtered.join(' ');
+};
+
+export const setNodeVerticalAlignment = (
+  nodeClassName = '',
+  parentClassName = '',
+  align: VerticalAlign | ''
+): string => {
+  const layoutKind = detectParentLayoutKind(parentClassName);
+  const tokens = nodeClassName.split(/\s+/).filter(Boolean);
+
+  const clearSet = new Set<string>([
+    ...VERTICAL_MARGIN_AUTO_CLASSES,
+    ...(layoutKind === 'flex-row' || layoutKind === 'grid' ? SELF_ALIGN_CLASSES : []),
+  ]);
+
+  const filtered = tokens.filter((t) => !clearSet.has(t));
+  if (!align) return filtered.join(' ');
+
+  if (layoutKind === 'flex-row' || layoutKind === 'grid') {
+    const token =
+      align === 'top'
+        ? 'self-start'
+        : align === 'middle'
+          ? 'self-center'
+          : 'self-end';
+    filtered.push(token);
+  } else {
+    const token =
+      align === 'top'
+        ? 'mb-auto'
+        : align === 'middle'
+          ? 'my-auto'
+          : 'mt-auto';
+    filtered.push(token);
+  }
+
+  return filtered.join(' ');
+};
+
+export const centerNodeInParent = (
+  nodeClassName = '',
+  parentClassName = ''
+): string => {
+  const withHoriz = setNodeHorizontalAlignment(
+    nodeClassName,
+    parentClassName,
+    'center'
+  );
+  return setNodeVerticalAlignment(withHoriz, parentClassName, 'middle');
+};
+
+export const clearNodeAlignment = (nodeClassName = ''): string => {
+  const removeSet = new Set<string>(ALL_ALIGNMENT_CLASSES);
+  return nodeClassName
+    .split(/\s+/)
+    .filter((t) => t && !removeSet.has(t))
+    .join(' ');
+};
+
+export const TRANSITION_PROPERTY_CLASSES = [
+  'transition-none',
+  'transition-all',
+  'transition',
+  'transition-colors',
+  'transition-opacity',
+  'transition-shadow',
+  'transition-transform',
+] as const;
+
+export const TRANSITION_DURATION_CLASSES = [
+  'duration-75',
+  'duration-100',
+  'duration-150',
+  'duration-200',
+  'duration-300',
+  'duration-500',
+  'duration-700',
+  'duration-1000',
+] as const;
+
+export const TRANSITION_EASING_CLASSES = [
+  'ease-linear',
+  'ease-in',
+  'ease-out',
+  'ease-in-out',
+] as const;
+
+export const HOVER_TRANSFORM_CLASSES = [
+  'hover:scale-95',
+  'hover:scale-105',
+  'hover:scale-110',
+  'hover:-translate-y-0.5',
+  'hover:-translate-y-1',
+  'active:scale-95',
+] as const;
+
+export const KEYFRAME_ANIMATION_CLASSES = [
+  'animate-none',
+  'animate-spin',
+  'animate-ping',
+  'animate-pulse',
+  'animate-bounce',
+] as const;
+
+export const extractNodeSubtreeBlueprint = (
+  nodes: NodesMap,
+  nodeId: string
+): NodeBlueprint | null => {
+  const node = nodes[nodeId];
+  if (!node) return null;
+
+  const childrenBlueprints: NodeBlueprint[] = [];
+  for (const childId of node.children || []) {
+    const childBp = extractNodeSubtreeBlueprint(nodes, childId);
+    if (childBp) childrenBlueprints.push(childBp);
+  }
+
+  return {
+    type: node.type,
+    name: node.name || node.type,
+    ...(node.variant !== undefined ? { variant: node.variant } : {}),
+    ...(node.content !== undefined ? { content: node.content } : {}),
+    props: { ...node.props },
+    ...(childrenBlueprints.length > 0 ? { children: childrenBlueprints } : {}),
+  };
+};
+
+export const countBlueprintNodes = (bp: NodeBlueprint): number =>
+  1 +
+  (bp.children || []).reduce(
+    (sum, child) => sum + countBlueprintNodes(child),
+    0
+  );
+
+export const createComponentHistoryEntry = (
+  nodes: NodesMap,
+  nodeId: string,
+  eventType: ComponentHistoryEventType,
+  idFactory: () => string = generateId,
+  timestamp: number = Date.now()
+): ComponentHistoryEntry | null => {
+  if (!nodeId || nodeId === 'root') return null;
+  const node = nodes[nodeId];
+  const snapshot = extractNodeSubtreeBlueprint(nodes, nodeId);
+  if (!node || !snapshot) return null;
+
+  return {
+    historyId: idFactory(),
+    eventType,
+    timestamp,
+    rootNodeId: nodeId,
+    label: node.name || node.type,
+    nodeType: node.type,
+    ...(node.variant ? { variant: node.variant } : {}),
+    classNameSummary: (node.props.className || '').replace(/\s+/g, ' ').trim(),
+    nodeCount: countBlueprintNodes(snapshot),
+    snapshot,
+  };
+};
+
+export const prependComponentHistory = (
+  historyList: ComponentHistoryEntry[],
+  entry: ComponentHistoryEntry | null,
+  maxItems = 25
+): ComponentHistoryEntry[] => {
+  if (!entry) return historyList;
+  return [entry, ...historyList].slice(0, maxItems);
+};
+
+export const refreshAddedComponentHistoryEntry = (
+  historyList: ComponentHistoryEntry[],
+  nodes: NodesMap,
+  nodeId: string,
+  timestamp: number = Date.now()
+): ComponentHistoryEntry[] => {
+  if (!nodeId || nodeId === 'root') return historyList;
+  const idx = historyList.findIndex(
+    (item) => item.eventType === 'added' && item.rootNodeId === nodeId
+  );
+  if (idx === -1) return historyList;
+
+  const node = nodes[nodeId];
+  const snapshot = extractNodeSubtreeBlueprint(nodes, nodeId);
+  if (!node || !snapshot) return historyList;
+
+  const existing = historyList[idx];
+  const updated: ComponentHistoryEntry = {
+    ...existing,
+    timestamp,
+    label: node.name || node.type,
+    variant: node.variant,
+    classNameSummary: (node.props.className || '').replace(/\s+/g, ' ').trim(),
+    nodeCount: countBlueprintNodes(snapshot),
+    snapshot,
+  };
+
+  return historyList.map((item, i) => (i === idx ? updated : item));
+};
+
+export const reinsertComponentFromHistory = (
+  prev: NodesMap,
+  selectedId: string,
+  entry: ComponentHistoryEntry,
+  idFactory: () => string = generateId
+): { nodes: NodesMap; createdId: string | null } =>
+  insertPageTemplateIntoTree(prev, selectedId, entry.snapshot, idFactory);
+
+export const filterComponentHistory = (
+  entries: ComponentHistoryEntry[],
+  filter: 'all' | ComponentHistoryEventType
+): ComponentHistoryEntry[] => {
+  if (filter === 'all') return entries;
+  return entries.filter((entry) => entry.eventType === filter);
+};
+
+
+
 
 
 
