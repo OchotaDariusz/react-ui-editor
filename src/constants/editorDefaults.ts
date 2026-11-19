@@ -1,5 +1,6 @@
 import type {
   EditorNode,
+  KeyboardShortcutItem,
   NodeBlueprint,
   NodesMap,
   NodeType,
@@ -13,6 +14,80 @@ export const THEME_STORAGE_KEY = 'react_ui_editor_theme_v1';
 export const SEO_STORAGE_KEY = 'react_ui_editor_seo_v1';
 export const COMPONENT_HISTORY_STORAGE_KEY = 'react_ui_editor_comp_history_v1';
 export const RECENT_SEARCHES_STORAGE_KEY = 'react_ui_editor_recent_searches_v1';
+export const INSPECTOR_TAB_STORAGE_KEY = 'react_ui_editor_inspector_tab_v1';
+export const SHORTCUTS_MODAL_STORAGE_KEY = 'react_ui_editor_shortcuts_modal_v1';
+export const SAVED_COMPONENTS_STORAGE_KEY = 'react_ui_editor_saved_components_v1';
+export const ASSETS_STORAGE_KEY = 'react_ui_editor_assets_v1';
+export const LEFT_SIDEBAR_COLLAPSED_STORAGE_KEY = 'react_ui_editor_left_collapsed_v1';
+export const RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY = 'react_ui_editor_right_collapsed_v1';
+export const RULERS_VISIBLE_STORAGE_KEY = 'react_ui_editor_rulers_v1';
+export const MAX_ASSET_FILE_BYTES = 2 * 1024 * 1024;
+
+export const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
+  {
+    id: 'delete-node',
+    action: 'Delete',
+    description: 'Usuwa zaznaczony komponent lub wszystkie zaznaczone elementy.',
+    keys: ['Delete'],
+    category: 'editing',
+  },
+  {
+    id: 'duplicate-node',
+    action: 'Duplicate',
+    description: 'Duplikuje zaznaczony komponent wraz z jego poddrzewem.',
+    keys: ['Ctrl / Cmd', 'Alt', 'D'],
+    category: 'editing',
+  },
+  {
+    id: 'parent-selection',
+    action: 'Parent selection',
+    description: 'Przechodzi poziom wyżej do elementu nadrzędnego (lub czyści multi-selekcję).',
+    keys: ['Escape'],
+    category: 'selection',
+  },
+  {
+    id: 'multi-select',
+    action: 'Multi-select',
+    description: 'Dodaje lub odejmuje komponent z zaznaczenia grupowego.',
+    keys: ['Shift / Ctrl / Cmd', 'Klik'],
+    category: 'selection',
+  },
+  {
+    id: 'undo',
+    action: 'Undo',
+    description: 'Cofa ostatnią zmianę wykonaną na płótnie.',
+    keys: ['Ctrl / Cmd', 'Z'],
+    category: 'history',
+  },
+  {
+    id: 'redo',
+    action: 'Redo',
+    description: 'Ponawia cofniętą wcześniej operację.',
+    keys: ['Ctrl / Cmd', 'Y'],
+    category: 'history',
+  },
+  {
+    id: 'redo-alt',
+    action: 'Redo (alternatywny)',
+    description: 'Alternatywny skrót do ponowienia cofniętej operacji.',
+    keys: ['Ctrl / Cmd', 'Shift', 'Z'],
+    category: 'history',
+  },
+  {
+    id: 'search-submit',
+    action: 'Zapisz wyszukiwanie',
+    description: 'Zapisuje aktualne wyszukiwanie komponentu na liście Recent Searches.',
+    keys: ['Enter'],
+    category: 'view',
+  },
+  {
+    id: 'toggle-shortcuts',
+    action: 'Keyboard Shortcuts',
+    description: 'Otwiera lub zamyka pływające okno skrótów klawiszowych.',
+    keys: ['?'],
+    category: 'view',
+  },
+];
 
 export const DEFAULT_SEO_METADATA: SeoMetadata = {
   title: '',
@@ -136,50 +211,148 @@ export const THEME_PRESETS: ThemePreset[] = [
     ],
   },
   {
-    id: 'minimal-slate',
-    name: 'Minimal Slate',
-    description: 'Monochromatyczny kontrast high-craft',
+    id: 'modern-minimal',
+    name: 'Modern Minimal',
+    description: 'Czysta typografia i monochromatyczny minimalizm',
     variables: [
       {
-        id: 'ms-primary',
+        id: 'mm-primary',
         name: '--color-primary',
         label: 'Primary',
         value: '#18181b',
         category: 'color',
       },
       {
-        id: 'ms-secondary',
+        id: 'mm-secondary',
         name: '--color-secondary',
         label: 'Secondary',
         value: '#52525b',
         category: 'color',
       },
       {
-        id: 'ms-surface',
+        id: 'mm-surface',
         name: '--color-surface',
         label: 'Surface',
         value: '#ffffff',
         category: 'color',
       },
       {
-        id: 'ms-accent',
+        id: 'mm-accent',
         name: '--color-accent',
         label: 'Muted Accent',
         value: '#f4f4f5',
         category: 'color',
       },
       {
-        id: 'ms-font-title',
+        id: 'mm-font-title',
         name: '--font-size-title',
         label: 'Title Size',
         value: '2.25rem',
         category: 'fontSize',
       },
       {
-        id: 'ms-font-body',
+        id: 'mm-font-body',
         name: '--font-size-body',
         label: 'Body Size',
         value: '0.95rem',
+        category: 'fontSize',
+      },
+    ],
+  },
+  {
+    id: 'playful-vibrant',
+    name: 'Playful Vibrant',
+    description: 'Żywy fiolet, koralowy róż i energetyczny cyjan',
+    variables: [
+      {
+        id: 'pv-primary',
+        name: '--color-primary',
+        label: 'Primary',
+        value: '#8b5cf6',
+        category: 'color',
+      },
+      {
+        id: 'pv-secondary',
+        name: '--color-secondary',
+        label: 'Secondary',
+        value: '#ec4899',
+        category: 'color',
+      },
+      {
+        id: 'pv-surface',
+        name: '--color-surface',
+        label: 'Surface',
+        value: '#fdf4ff',
+        category: 'color',
+      },
+      {
+        id: 'pv-accent',
+        name: '--color-accent',
+        label: 'Accent',
+        value: '#06b6d4',
+        category: 'color',
+      },
+      {
+        id: 'pv-font-title',
+        name: '--font-size-title',
+        label: 'Title Size',
+        value: '2.5rem',
+        category: 'fontSize',
+      },
+      {
+        id: 'pv-font-body',
+        name: '--font-size-body',
+        label: 'Body Size',
+        value: '1.05rem',
+        category: 'fontSize',
+      },
+    ],
+  },
+  {
+    id: 'dark-high-contrast',
+    name: 'Dark High-Contrast',
+    description: 'Ciemne tło o maksymalnym kontraście i jasnym akcencie',
+    variables: [
+      {
+        id: 'dhc-primary',
+        name: '--color-primary',
+        label: 'Primary',
+        value: '#38bdf8',
+        category: 'color',
+      },
+      {
+        id: 'dhc-secondary',
+        name: '--color-secondary',
+        label: 'Secondary',
+        value: '#facc15',
+        category: 'color',
+      },
+      {
+        id: 'dhc-surface',
+        name: '--color-surface',
+        label: 'Surface',
+        value: '#09090b',
+        category: 'color',
+      },
+      {
+        id: 'dhc-on-surface',
+        name: '--color-on-surface',
+        label: 'On Surface',
+        value: '#fafafa',
+        category: 'color',
+      },
+      {
+        id: 'dhc-font-title',
+        name: '--font-size-title',
+        label: 'Title Size',
+        value: '2.5rem',
+        category: 'fontSize',
+      },
+      {
+        id: 'dhc-font-body',
+        name: '--font-size-body',
+        label: 'Body Size',
+        value: '1rem',
         category: 'fontSize',
       },
     ],
@@ -275,55 +448,6 @@ export const THEME_PRESETS: ThemePreset[] = [
       },
       {
         id: 'ws-font-body',
-        name: '--font-size-body',
-        label: 'Body Size',
-        value: '1rem',
-        category: 'fontSize',
-      },
-    ],
-  },
-  {
-    id: 'midnight-dark',
-    name: 'Midnight Neon',
-    description: 'Ciemne tło i cyjanowy akcent',
-    variables: [
-      {
-        id: 'md-primary',
-        name: '--color-primary',
-        label: 'Primary',
-        value: '#38bdf8',
-        category: 'color',
-      },
-      {
-        id: 'md-secondary',
-        name: '--color-secondary',
-        label: 'Secondary',
-        value: '#a855f7',
-        category: 'color',
-      },
-      {
-        id: 'md-surface',
-        name: '--color-surface',
-        label: 'Surface',
-        value: '#0f172a',
-        category: 'color',
-      },
-      {
-        id: 'md-on-surface',
-        name: '--color-on-surface',
-        label: 'On Surface',
-        value: '#f8fafc',
-        category: 'color',
-      },
-      {
-        id: 'md-font-title',
-        name: '--font-size-title',
-        label: 'Title Size',
-        value: '2.5rem',
-        category: 'fontSize',
-      },
-      {
-        id: 'md-font-body',
         name: '--font-size-body',
         label: 'Body Size',
         value: '1rem',

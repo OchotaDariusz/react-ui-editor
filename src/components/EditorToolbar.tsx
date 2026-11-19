@@ -13,8 +13,13 @@ import {
   FileText,
   ListChecks,
   Monitor,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Redo2,
   RotateCcw,
+  Ruler,
   Smartphone,
   Tablet,
   Undo2,
@@ -39,6 +44,12 @@ interface EditorToolbarProps {
   onResetZoom: () => void;
   showGuides: boolean;
   onToggleGuides: () => void;
+  showRulers: boolean;
+  onToggleRulers: () => void;
+  leftSidebarCollapsed: boolean;
+  onToggleLeftSidebar: () => void;
+  rightSidebarCollapsed: boolean;
+  onToggleRightSidebar: () => void;
   multiSelectMode: boolean;
   multiSelectCount: number;
   onToggleMultiSelect: () => void;
@@ -78,6 +89,12 @@ export function EditorToolbar({
   onResetZoom,
   showGuides,
   onToggleGuides,
+  showRulers,
+  onToggleRulers,
+  leftSidebarCollapsed,
+  onToggleLeftSidebar,
+  rightSidebarCollapsed,
+  onToggleRightSidebar,
   multiSelectMode,
   multiSelectCount,
   onToggleMultiSelect,
@@ -126,13 +143,33 @@ export function EditorToolbar({
       <div className="flex items-center gap-0.5 shrink-0">
         <button
           type="button"
+          data-testid="toggle-left-sidebar-btn"
+          onClick={onToggleLeftSidebar}
+          aria-expanded={!leftSidebarCollapsed}
+          aria-label="Pokaż lub ukryj panel lewy"
+          title={leftSidebarCollapsed ? 'Pokaż panel lewy' : 'Ukryj panel lewy'}
+          className={`p-1 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            leftSidebarCollapsed
+              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {leftSidebarCollapsed ? (
+            <PanelLeftOpen className="w-3.5 h-3.5" />
+          ) : (
+            <PanelLeftClose className="w-3.5 h-3.5" />
+          )}
+        </button>
+        <div className="h-5 w-px bg-slate-200" aria-hidden="true" />
+        <button
+          type="button"
           onClick={onUndo}
           disabled={!canUndo}
           title="Cofnij (Ctrl+Z)"
           aria-label="Cofnij (Ctrl+Z)"
           className="p-1 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 disabled:hover:bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
-          <Undo2 className="w-4 h-4" />
+          <Undo2 className="w-3.5 h-3.5" />
         </button>
         <button
           type="button"
@@ -142,20 +179,22 @@ export function EditorToolbar({
           aria-label="Ponów (Ctrl+Y)"
           className="p-1 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 disabled:hover:bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
-          <Redo2 className="w-4 h-4" />
+          <Redo2 className="w-3.5 h-3.5" />
         </button>
-        <div className="h-5 w-px bg-slate-200 mx-0.5" aria-hidden="true" />
+        <div className="h-5 w-px bg-slate-200" aria-hidden="true" />
         <button
           type="button"
           onClick={onReset}
-          className={`flex items-center gap-1 px-1.5 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          title={confirmReset ? 'Kliknij ponownie, aby zresetować płótno' : 'Resetuj płótno'}
+          aria-label={confirmReset ? 'Potwierdź reset płótna' : 'Resetuj płótno'}
+          className={`flex items-center gap-1 p-1.5 rounded-lg text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             confirmReset
-              ? 'bg-red-600 text-white'
+              ? 'bg-red-600 text-white px-2'
               : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          {confirmReset ? 'Kliknij ponownie' : 'Reset'}
+          {confirmReset && <span>Potwierdź</span>}
         </button>
       </div>
 
@@ -179,7 +218,7 @@ export function EditorToolbar({
                   : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-3.5 h-3.5" />
             </button>
           ))}
         </div>
@@ -205,7 +244,7 @@ export function EditorToolbar({
             aria-label="Resetuj powiększenie do 100%"
             disabled={showCode}
             onClick={onResetZoom}
-            className={`px-1.5 py-1 rounded-md text-xs font-mono font-semibold tabular-nums transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            className={`px-1 py-0.5 rounded-md text-[11px] font-mono font-semibold tabular-nums transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
               zoom !== 1 && !showCode
                 ? 'bg-white text-blue-600 shadow-sm'
                 : 'text-slate-700 hover:bg-white/70'
@@ -226,7 +265,7 @@ export function EditorToolbar({
         </div>
       </div>
 
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="flex items-center gap-0.5 shrink-0">
         <button
           type="button"
           title="Tryb wielokrotnego zaznaczania (lub Ctrl/Shift+Klik)"
@@ -234,7 +273,7 @@ export function EditorToolbar({
           aria-pressed={multiSelectMode}
           disabled={previewMode || showCode}
           onClick={onToggleMultiSelect}
-          className={`flex items-center gap-1 px-1.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             multiSelectMode && !previewMode && !showCode
               ? 'bg-violet-50 border-violet-300 text-violet-700'
               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -251,7 +290,7 @@ export function EditorToolbar({
           aria-pressed={showGuides}
           disabled={previewMode || showCode}
           onClick={onToggleGuides}
-          className={`flex items-center gap-1 px-1.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             showGuides && !previewMode && !showCode
               ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -263,25 +302,37 @@ export function EditorToolbar({
 
         <button
           type="button"
+          data-testid="toggle-rulers-btn"
+          title="Pokaż lub ukryj linijki pikselowe płótna"
+          aria-label="Linijki pikselowe"
+          aria-pressed={showRulers}
+          disabled={showCode}
+          onClick={onToggleRulers}
+          className={`flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            showRulers && !showCode
+              ? 'bg-blue-50 border-blue-300 text-blue-700'
+              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <Ruler className="w-3.5 h-3.5" />
+          Rulers
+        </button>
+
+        <button
+          type="button"
           title="Kopiuj JSON drzewa"
           aria-label="Kopiuj JSON drzewa"
           onClick={onCopyTreeJson}
-          className={`flex items-center gap-1 px-1.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex items-center justify-center p-1.5 rounded-lg text-[11px] font-semibold border transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             copiedJson
               ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
           }`}
         >
           {copiedJson ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-600" />
-              Gotowe
-            </>
+            <Check className="w-3.5 h-3.5 text-emerald-600" />
           ) : (
-            <>
-              <Copy className="w-3.5 h-3.5" />
-              Kopiuj
-            </>
+            <Copy className="w-3.5 h-3.5" />
           )}
         </button>
 
@@ -295,17 +346,16 @@ export function EditorToolbar({
           aria-label="Export PDF"
           disabled={showCode || isExportingPdf}
           onClick={onExportPdf}
-          className="flex items-center gap-1 px-1.5 py-1.5 rounded-lg text-xs font-semibold border bg-white border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="flex items-center justify-center p-1.5 rounded-lg text-[11px] font-semibold border bg-white border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
         >
           <FileDown className="w-3.5 h-3.5" />
-          {isExportingPdf ? 'PDF...' : 'Export PDF'}
         </button>
 
         <button
           type="button"
           aria-pressed={previewMode}
           onClick={onTogglePreview}
-          className={`flex items-center gap-1 px-1.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             previewMode
               ? 'bg-blue-50 border-blue-300 text-blue-700'
               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -327,7 +377,7 @@ export function EditorToolbar({
             type="button"
             aria-pressed={true}
             onClick={onToggleShowCode}
-            className="flex items-center gap-1 px-2 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            className="flex items-center gap-1 px-1.5 py-1 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             <Code className="w-3.5 h-3.5" />
             Płótno
@@ -340,7 +390,7 @@ export function EditorToolbar({
               aria-expanded={exportMenuOpen}
               aria-label="Eksportuj projekt"
               onClick={() => setExportMenuOpen((prev) => !prev)}
-              className="flex items-center gap-1 px-2 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="flex items-center gap-1 px-1.5 py-1 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <Code className="w-3.5 h-3.5" />
               Eksport
@@ -435,6 +485,27 @@ export function EditorToolbar({
             )}
           </div>
         )}
+
+        <div className="h-5 w-px bg-slate-200" aria-hidden="true" />
+        <button
+          type="button"
+          data-testid="toggle-right-sidebar-btn"
+          onClick={onToggleRightSidebar}
+          aria-expanded={!rightSidebarCollapsed}
+          aria-label="Pokaż lub ukryj Inspektor"
+          title={rightSidebarCollapsed ? 'Pokaż Inspektor' : 'Ukryj Inspektor'}
+          className={`p-1 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            rightSidebarCollapsed
+              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+              : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {rightSidebarCollapsed ? (
+            <PanelRightOpen className="w-3.5 h-3.5" />
+          ) : (
+            <PanelRightClose className="w-3.5 h-3.5" />
+          )}
+        </button>
       </div>
     </header>
   );

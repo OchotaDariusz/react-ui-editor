@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -10,29 +10,46 @@ import {
   AlignRight,
   AlignStartHorizontal,
   AlignStartVertical,
+  Bookmark,
   Check,
   Code2,
   Crosshair,
   Download,
   Files,
+  Keyboard,
+  LayoutGrid,
   ListChecks,
+  Loader2,
   Palette,
+  PanelRightClose,
   Plus,
   RotateCcw,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react';
 import type {
   EditorNode,
+  InspectorTab,
   NodesMap,
   SeoMetadata,
   ThemeVarCategory,
   ThemeVariable,
 } from '../types/editor';
-import { THEME_PRESETS } from '../constants/editorDefaults';
+import {
+  INSPECTOR_TAB_STORAGE_KEY,
+  THEME_PRESETS,
+} from '../constants/editorDefaults';
 import { ICON_LIBRARY } from '../constants/lucideIcons';
+import { DesignLintPanel } from './DesignLintPanel';
 import { DevToolsPanel } from './DevToolsPanel';
+import { GridLayoutPanel } from './GridLayoutPanel';
+import { KeyboardShortcutsPanel } from './KeyboardShortcutsPanel';
+import { SeoPreview } from './SeoPreview';
+import { SitemapGenerator } from './SitemapGenerator';
+import { ThemeUsageDashboard } from './ThemeUsageDashboard';
+import type { DesignLintIssue } from '../utils/designLint';
 import {
   ALIGN_ITEMS_CLASSES,
   BORDER_RADIUS_CLASSES,
@@ -46,6 +63,7 @@ import {
   TRANSITION_DURATION_CLASSES,
   TRANSITION_EASING_CLASSES,
   TRANSITION_PROPERTY_CLASSES,
+  applySmartLayoutClasses,
   centerNodeInParent,
   clearNodeAlignment,
   detectMatchingThemePresetId,
@@ -86,15 +104,50 @@ interface InspectorPanelProps {
   onBulkDeleteNodes: () => void;
   onChangeVariant: (variantId: string) => void;
   onReplaceNodes: (nextNodes: NodesMap) => void;
+  onUpdateNodeClassById: (nodeId: string, nextClassName: string) => void;
+  onSelectNode: (nodeId: string) => void;
+  onAddGridNode: () => void;
   onDuplicateNode: () => void;
   onDeleteNode: () => void;
+  onSaveAsComponent: () => void;
+  showShortcutsModal: boolean;
+  onToggleShortcutsModal: () => void;
   themeVars: ThemeVariable[];
   onAddThemeVar: (name: string, value: string, category: ThemeVarCategory) => void;
   onUpdateThemeVar: (id: string, value: string) => void;
   onDeleteThemeVar: (id: string) => void;
   onReplaceThemeVars: (nextVars: ThemeVariable[]) => void;
+  onSetNodeThemeOverride: (varName: string, overrideValue: string | null) => void;
+  onClearNodeThemeOverrides: () => void;
+  onFixDesignLintIssue: (issue: DesignLintIssue) => void;
+  onFixAllDesignLint: () => number;
+  onCollapse?: () => void;
   seoMetadata: SeoMetadata;
   onChangeSeo: (field: keyof SeoMetadata, value: string) => void;
+}
+
+interface SmartLayoutSuggestion {
+  name: string;
+  description: string;
+  classes: string;
+  patternType: string;
+}
+
+function loadInitialInspectorTab(): InspectorTab {
+  try {
+    const saved = localStorage.getItem(INSPECTOR_TAB_STORAGE_KEY);
+    if (
+      saved === 'properties' ||
+      saved === 'grid-layout' ||
+      saved === 'devtools' ||
+      saved === 'shortcuts'
+    ) {
+      return saved;
+    }
+  } catch {
+    // Ignore localStorage access errors
+  }
+  return 'properties';
 }
 
 const LAYOUT_OPTIONS = [
@@ -282,18 +335,29 @@ export function InspectorPanel({
   onBulkDeleteNodes,
   onChangeVariant,
   onReplaceNodes,
+  onUpdateNodeClassById,
+  onSelectNode,
+  onAddGridNode,
   onDuplicateNode,
   onDeleteNode,
+  onSaveAsComponent,
+  showShortcutsModal,
+  onToggleShortcutsModal,
   themeVars,
   onAddThemeVar,
   onUpdateThemeVar,
   onDeleteThemeVar,
   onReplaceThemeVars,
+  onSetNodeThemeOverride,
+  onClearNodeThemeOverrides,
+  onFixDesignLintIssue,
+  onFixAllDesignLint,
+  onCollapse,
   seoMetadata,
   onChangeSeo,
 }: InspectorPanelProps) {
-  const [inspectorTab, setInspectorTab] = useState<'properties' | 'devtools'>(
-    'properties'
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>(
+    loadInitialInspectorTab
   );
   const [showIndividualSides, setShowIndividualSides] = useState(false);
   const [showAddVar, setShowAddVar] = useState(false);
@@ -301,6 +365,13 @@ export function InspectorPanel({
   const [importThemeDraft, setImportThemeDraft] = useState('');
   const [importThemeError, setImportThemeError] = useState('');
   const [themeStatusMessage, setThemeStatusMessage] = useState('');
+  const [savedNotice, setSavedNotice] = useState(false);
+  const [smartLayoutGoal, setSmartLayoutGoal] = useState('');
+  const [smartLayoutSuggestions, setSmartLayoutSuggestions] = useState<
+    SmartLayoutSuggestion[]
+  >([]);
+  const [isGeneratingLayout, setIsGeneratingLayout] = useState(false);
+  const [smartLayoutError, setSmartLayoutError] = useState('');
   const themeFileInputRef = useRef<HTMLInputElement | null>(null);
   const [newVarName, setNewVarName] = useState('');
   const [newVarCategory, setNewVarCategory] =
@@ -308,7 +379,85 @@ export function InspectorPanel({
   const [newVarValue, setNewVarValue] = useState('#7c3aed');
   const [bulkCustomClasses, setBulkCustomClasses] = useState('');
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(INSPECTOR_TAB_STORAGE_KEY, inspectorTab);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [inspectorTab]);
+
+  useEffect(() => {
+    setSmartLayoutSuggestions([]);
+    setSmartLayoutError('');
+    setSavedNotice(false);
+  }, [selectedId]);
+
   const activeThemePresetId = detectMatchingThemePresetId(themeVars, THEME_PRESETS);
+
+  const handleSuggestSmartLayout = async (goalOverride?: string) => {
+    if (!selectedNode || (selectedNode.type !== 'Container' && selectedNode.type !== 'Grid')) {
+      return;
+    }
+    const activeGoal = (goalOverride ?? smartLayoutGoal).trim();
+    if (goalOverride !== undefined) {
+      setSmartLayoutGoal(goalOverride);
+    }
+    setIsGeneratingLayout(true);
+    setSmartLayoutError('');
+
+    try {
+      const response = await fetch('/api/ai/smart-layout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          node: {
+            id: selectedNode.id,
+            type: selectedNode.type,
+            name: selectedNode.name,
+            className: selectedNode.props.className || '',
+            childrenSummary: (selectedNode.children || [])
+              .map((cid) => nodes[cid])
+              .filter((child): child is EditorNode => Boolean(child))
+              .map((child) => ({
+                type: child.type,
+                name: child.name,
+                content:
+                  child.content ||
+                  child.props.placeholder ||
+                  child.props.iconName ||
+                  '',
+              })),
+          },
+          goal: activeGoal,
+        }),
+      });
+
+      const payload = (await response.json()) as {
+        suggestions?: SmartLayoutSuggestion[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setSmartLayoutSuggestions([]);
+        setSmartLayoutError(
+          payload.error || 'Nie udało się pobrać sugestii Smart Layout.'
+        );
+        return;
+      }
+
+      setSmartLayoutSuggestions(
+        Array.isArray(payload.suggestions) ? payload.suggestions : []
+      );
+    } catch {
+      setSmartLayoutSuggestions([]);
+      setSmartLayoutError(
+        'Błąd połączenia z serwerem podczas generowania Smart Layout.'
+      );
+    } finally {
+      setIsGeneratingLayout(false);
+    }
+  };
 
   const showTemporaryThemeStatus = (msg: string) => {
     setThemeStatusMessage(msg);
@@ -423,58 +572,122 @@ export function InspectorPanel({
   );
 
   return (
-    <aside className="w-80 bg-white border-l border-slate-200 flex flex-col shrink-0 z-20">
-      <div className="h-14 px-4 border-b border-slate-200 flex items-center justify-between shrink-0">
-        <h2 className="font-bold text-sm text-slate-900">Inspektor</h2>
-        {isMultiSelect ? (
-          <span className="px-2 py-0.5 rounded-md bg-violet-50 border border-violet-200 text-violet-700 text-xs font-semibold">
-            {activeIds.length} zazn.
-          </span>
-        ) : (
-          selectedNode && (
-            <span className="text-xs text-slate-500 font-mono">
-              {selectedNode.type}
+    <aside
+      data-testid="inspector-sidebar"
+      className="w-[356px] bg-white border-l border-slate-200 flex flex-col shrink-0 z-20"
+    >
+      <div className="h-14 px-3.5 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <h2 className="font-bold text-sm text-slate-900">Inspektor</h2>
+          {isMultiSelect ? (
+            <span className="text-xs font-semibold text-violet-700">
+              {activeIds.length} zazn.
             </span>
-          )
+          ) : (
+            selectedNode && (
+              <span className="text-xs text-slate-500 font-mono truncate">
+                {selectedNode.type}
+              </span>
+            )
+          )}
+        </div>
+        {onCollapse && (
+          <button
+            type="button"
+            data-testid="collapse-right-sidebar-btn"
+            onClick={onCollapse}
+            title="Ukryj panel Inspektora"
+            aria-label="Ukryj Inspektor"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            <PanelRightClose className="w-4 h-4" />
+          </button>
         )}
       </div>
 
       <div
         role="tablist"
         aria-label="Tryb inspektora"
-        className="grid grid-cols-2 p-1.5 gap-1 border-b border-slate-100 bg-slate-50/70 shrink-0"
+        className="flex items-center p-1 gap-0.5 border-b border-slate-100 bg-slate-50/70 shrink-0"
       >
         <button
           type="button"
           role="tab"
           aria-selected={inspectorTab === 'properties'}
           onClick={() => setInspectorTab('properties')}
-          className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex-auto flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             inspectorTab === 'properties'
               ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+          <SlidersHorizontal className="w-3 h-3 shrink-0" />
           Właściwości
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={inspectorTab === 'grid-layout'}
+          onClick={() => setInspectorTab('grid-layout')}
+          className={`flex-auto flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            inspectorTab === 'grid-layout'
+              ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <LayoutGrid className="w-3 h-3 shrink-0" />
+          Grid Layout
         </button>
         <button
           type="button"
           role="tab"
           aria-selected={inspectorTab === 'devtools'}
           onClick={() => setInspectorTab('devtools')}
-          className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex-auto flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             inspectorTab === 'devtools'
               ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <Code2 className="w-3.5 h-3.5 shrink-0" />
+          <Code2 className="w-3 h-3 shrink-0" />
           DevTools
+        </button>
+        <button
+          type="button"
+          role="tab"
+          title="Keyboard Shortcuts"
+          aria-selected={inspectorTab === 'shortcuts'}
+          onClick={() => setInspectorTab('shortcuts')}
+          className={`flex-auto flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            inspectorTab === 'shortcuts'
+              ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Keyboard className="w-3 h-3 shrink-0" />
+          Shortcuts
         </button>
       </div>
 
-      {inspectorTab === 'devtools' ? (
+      {inspectorTab === 'shortcuts' ? (
+        <KeyboardShortcutsPanel
+          isFloatingModalOpen={showShortcutsModal}
+          onOpenFloatingModal={onToggleShortcutsModal}
+        />
+      ) : inspectorTab === 'grid-layout' ? (
+        <GridLayoutPanel
+          selectedId={selectedId}
+          selectedNode={selectedNode}
+          isMultiSelect={isMultiSelect}
+          nodes={nodes}
+          onUpdateNodeClass={(nextClassName) =>
+            onUpdateNode('className', nextClassName, true)
+          }
+          onUpdateNodeClassById={onUpdateNodeClassById}
+          onSelectNode={onSelectNode}
+          onAddGridNode={onAddGridNode}
+        />
+      ) : inspectorTab === 'devtools' ? (
         <DevToolsPanel
           selectedId={selectedId}
           selectedNode={selectedNode}
@@ -571,14 +784,38 @@ export function InspectorPanel({
             })()}
 
           {!isMultiSelect && selectedId !== 'root' && (
-            <button
-              type="button"
-              title="Duplikuj (Ctrl+Alt+D)"
-              onClick={onDuplicateNode}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-lg text-xs font-medium text-slate-700 hover:text-blue-700 whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-            >
-              <Files className="w-3.5 h-3.5" /> Kopiuj
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                title="Duplikuj (Ctrl+Alt+D)"
+                onClick={onDuplicateNode}
+                className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-lg text-xs font-medium text-slate-700 hover:text-blue-700 whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <Files className="w-3.5 h-3.5" /> Kopiuj
+              </button>
+              <button
+                type="button"
+                title="Zapisz jako komponent w Saved Components"
+                aria-label="Zapisz jako komponent"
+                onClick={() => {
+                  onSaveAsComponent();
+                  setSavedNotice(true);
+                  window.setTimeout(() => setSavedNotice(false), 1800);
+                }}
+                className={`flex items-center justify-center gap-1.5 py-1.5 px-2 border rounded-lg text-xs font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  savedNotice
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                    : 'bg-slate-50 hover:bg-blue-50 border-slate-200 hover:border-blue-300 text-slate-700 hover:text-blue-700'
+                }`}
+              >
+                {savedNotice ? (
+                  <Check className="w-3.5 h-3.5" />
+                ) : (
+                  <Bookmark className="w-3.5 h-3.5" />
+                )}
+                {savedNotice ? 'Zapisano' : 'Zapisz'}
+              </button>
+            </div>
           )}
 
           {!isMultiSelect && selectedNode?.type === 'Icon' && (
@@ -757,6 +994,129 @@ export function InspectorPanel({
             </section>
           )}
 
+          {!isMultiSelect &&
+            selectedNode &&
+            (selectedNode.type === 'Container' ||
+              selectedNode.type === 'Grid') && (
+              <section
+                aria-label="Smart Layout"
+                className="space-y-2.5 p-3 bg-indigo-50/50 rounded-xl border border-indigo-200/80"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <h3 className="text-[11px] font-bold text-indigo-950 tracking-wide">
+                      Smart Layout
+                    </h3>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-[10px] font-semibold text-indigo-700">
+                    AI
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1">
+                  {[
+                    'Centered card',
+                    'Sidebar-content layout',
+                    'Header row',
+                  ].map((presetLabel) => (
+                    <button
+                      key={presetLabel}
+                      type="button"
+                      disabled={isGeneratingLayout}
+                      onClick={() => void handleSuggestSmartLayout(presetLabel)}
+                      className="px-2 py-0.5 bg-white hover:bg-indigo-100/70 border border-indigo-200 rounded text-[10px] font-medium text-indigo-800 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    >
+                      {presetLabel}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    aria-label="Cel układu Smart Layout"
+                    placeholder="np. Centered card, 2-col grid..."
+                    value={smartLayoutGoal}
+                    onChange={(e) => setSmartLayoutGoal(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void handleSuggestSmartLayout();
+                      }
+                    }}
+                    className="flex-1 min-w-0 px-2.5 py-1.5 bg-white border border-indigo-200 rounded-md text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    aria-label="Zaproponuj układ Smart Layout AI"
+                    disabled={isGeneratingLayout}
+                    onClick={() => void handleSuggestSmartLayout()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-[11px] font-semibold rounded-md transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 shrink-0"
+                  >
+                    {isGeneratingLayout ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" />
+                    )}
+                    {isGeneratingLayout ? 'Analiza...' : 'Sugeruj'}
+                  </button>
+                </div>
+
+                {smartLayoutError && (
+                  <p
+                    role="alert"
+                    className="p-2 rounded-lg bg-red-50 border border-red-200 text-[11px] text-red-700 leading-snug"
+                  >
+                    {smartLayoutError}
+                  </p>
+                )}
+
+                {smartLayoutSuggestions.length > 0 && (
+                  <div className="space-y-1.5">
+                    {smartLayoutSuggestions.map((item) => (
+                      <div
+                        key={`${item.name}-${item.classes}`}
+                        className="p-2 bg-white border border-indigo-200/80 rounded-lg space-y-1.5"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-slate-800 truncate">
+                              {item.name}
+                            </div>
+                            {item.description && (
+                              <p className="text-[10px] text-slate-500 leading-snug">
+                                {item.description}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 shrink-0">
+                            {item.patternType}
+                          </span>
+                        </div>
+                        <code className="block text-[10px] font-mono text-slate-700 bg-slate-50 border border-slate-200/80 rounded px-1.5 py-1 break-words">
+                          {item.classes}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = applySmartLayoutClasses(
+                              selectedNode.props.className || '',
+                              item.classes
+                            );
+                            onUpdateNode('className', updated, true);
+                          }}
+                          className="w-full py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded text-[11px] font-semibold text-indigo-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                        >
+                          Zastosuj układ
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
           {!isMultiSelect && selectedNode?.type === 'Container' && (
             <div className="space-y-2 p-3 bg-slate-50 rounded-xl border border-slate-200/80">
               <span className="block text-[11px] font-bold text-slate-500 tracking-wide">
@@ -900,9 +1260,18 @@ export function InspectorPanel({
 
           {!isMultiSelect && selectedNode?.type === 'Grid' && (
             <div className="space-y-2.5 p-3 bg-slate-50 rounded-xl border border-slate-200/80">
-              <span className="block text-[11px] font-bold text-slate-500 tracking-wide">
-                Kolumny Grid
-              </span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="block text-[11px] font-bold text-slate-500 tracking-wide">
+                  Kolumny Grid
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInspectorTab('grid-layout')}
+                  className="text-[11px] font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1"
+                >
+                  Pełny Grid Layout
+                </button>
+              </div>
               <div className="grid grid-cols-4 gap-1.5">
                 {GRID_COLUMN_OPTIONS.map((opt) => {
                   const isActive = classTokens.includes(opt.cls);
@@ -1633,6 +2002,33 @@ export function InspectorPanel({
             </label>
           </section>
 
+          <ThemeUsageDashboard
+            selectedNode={selectedNode}
+            isMultiSelect={isMultiSelect}
+            nodes={nodes}
+            themeVars={themeVars}
+            onSetLocalOverride={onSetNodeThemeOverride}
+            onClearAllLocalOverrides={onClearNodeThemeOverrides}
+            onAttachThemeVarClass={(varItem, mode) => {
+              if (mode === 'bg') {
+                applyClassUpdate((curr) =>
+                  setTailwindBgColor(curr, `bg-[var(${varItem.name})]`)
+                );
+              } else if (mode === 'size') {
+                applyClassUpdate((curr) =>
+                  setTailwindFontSize(
+                    curr,
+                    `text-[length:var(${varItem.name})]`
+                  )
+                );
+              } else {
+                applyClassUpdate((curr) =>
+                  setTailwindTextColor(curr, `text-[var(${varItem.name})]`)
+                );
+              }
+            }}
+          />
+
           <section
             aria-label="Theme"
             className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200/80"
@@ -1695,17 +2091,47 @@ export function InspectorPanel({
               </div>
             )}
 
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600">
-                  <Palette className="w-3 h-3 text-slate-400" />
-                  Presety motywu
-                </span>
-                {activeThemePresetId && (
-                  <span className="text-[10px] font-medium text-blue-600">
-                    Aktywny preset
-                  </span>
-                )}
+            <div className="space-y-2">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="inspector-theme-presets"
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600"
+                  >
+                    <Palette className="w-3 h-3 text-slate-400" />
+                    Presets
+                  </label>
+                  {activeThemePresetId && (
+                    <span className="text-[10px] font-medium text-blue-600">
+                      Aktywny preset
+                    </span>
+                  )}
+                </div>
+                <select
+                  id="inspector-theme-presets"
+                  aria-label="Presets"
+                  value={activeThemePresetId || ''}
+                  onChange={(e) => {
+                    const preset = THEME_PRESETS.find(
+                      (p) => p.id === e.target.value
+                    );
+                    if (!preset) return;
+                    onReplaceThemeVars(
+                      preset.variables.map((v) => ({ ...v }))
+                    );
+                    showTemporaryThemeStatus(`Zastosowano: ${preset.name}`);
+                  }}
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {!activeThemePresetId && (
+                    <option value="">Własny motyw (Custom)</option>
+                  )}
+                  {THEME_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div
                 role="group"
@@ -2035,6 +2461,15 @@ export function InspectorPanel({
             </div>
           </section>
 
+          <DesignLintPanel
+            selectedId={selectedId}
+            nodes={nodes}
+            themeVars={themeVars}
+            onSelectNode={onSelectNode}
+            onFixIssue={onFixDesignLintIssue}
+            onFixAll={onFixAllDesignLint}
+          />
+
           <section
             aria-label="SEO"
             className="space-y-2.5 p-3 bg-slate-50 rounded-xl border border-slate-200/80"
@@ -2093,6 +2528,14 @@ export function InspectorPanel({
                 className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
+
+            <SeoPreview seoMetadata={seoMetadata} nodes={nodes} />
+
+            <SitemapGenerator
+              nodes={nodes}
+              seoMetadata={seoMetadata}
+              onSelectNode={onSelectNode}
+            />
           </section>
 
           {!isMultiSelect &&

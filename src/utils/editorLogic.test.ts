@@ -83,13 +83,13 @@ test('updateNodeInTree updates direct property and nested props immutably', () =
   assert.equal(updatedClass['heading-1']?.props.className, 'text-4xl font-bold');
 });
 
-test('duplicateNodeInTree deep-clones containers and inserts right after original', () => {
+test('duplicateNodeInTree deep-clones containers, inserts right after original, and appends Copy N suffix', () => {
   const nextId = makeIdFactory();
   const res = duplicateNodeInTree(INITIAL_NODES, 'hero-1', nextId);
   assert.equal(res.createdId, 'test_1');
   const clonedHero = res.nodes['test_1'];
   assert.ok(clonedHero);
-  assert.equal(clonedHero.name, 'Hero Section (kopia)');
+  assert.equal(clonedHero.name, 'Hero Section Copy 1');
   assert.equal(clonedHero.children.length, 4);
   assert.deepEqual(res.nodes['root']?.children, ['hero-1', 'test_1']);
   // Children should also have distinct IDs and point to cloned parent
@@ -1184,5 +1184,859 @@ test('parseImportedTheme parses CSS :root, flat JSON, ThemeVariable array, and M
   const empty = parseImportedTheme('   ');
   assert.equal(empty.ok, false);
 });
+
+test('KEYBOARD_SHORTCUTS and filterKeyboardShortcuts expose Delete, Duplicate, and Parent selection', async () => {
+  const { KEYBOARD_SHORTCUTS } = await import('../constants/editorDefaults.ts');
+  const { filterKeyboardShortcuts } = await import('./editorLogic.ts');
+
+  const actions = KEYBOARD_SHORTCUTS.map((s) => s.action);
+  assert.ok(actions.includes('Delete'));
+  assert.ok(actions.includes('Duplicate'));
+  assert.ok(actions.includes('Parent selection'));
+  assert.ok(KEYBOARD_SHORTCUTS.every((s) => s.keys.length > 0));
+
+  assert.equal(filterKeyboardShortcuts(KEYBOARD_SHORTCUTS, '').length, KEYBOARD_SHORTCUTS.length);
+  assert.deepEqual(
+    filterKeyboardShortcuts(KEYBOARD_SHORTCUTS, 'Duplicate').map((s) => s.id),
+    ['duplicate-node']
+  );
+  assert.deepEqual(
+    filterKeyboardShortcuts(KEYBOARD_SHORTCUTS, 'nadrzędnego').map((s) => s.id),
+    ['parent-selection']
+  );
+  assert.deepEqual(
+    filterKeyboardShortcuts(KEYBOARD_SHORTCUTS, 'Escape').map((s) => s.id),
+    ['parent-selection']
+  );
+});
+
+test('THEME_PRESETS includes Modern Minimal, Playful Vibrant, Dark High-Contrast, and Material Design 3', async () => {
+  const { THEME_PRESETS } = await import('../constants/editorDefaults.ts');
+  const { detectMatchingThemePresetId } = await import('./editorLogic.ts');
+
+  const names = THEME_PRESETS.map((p) => p.name);
+  assert.ok(names.includes('Material Design 3'));
+  assert.ok(names.includes('Modern Minimal'));
+  assert.ok(names.includes('Playful Vibrant'));
+  assert.ok(names.includes('Dark High-Contrast'));
+
+  for (const preset of THEME_PRESETS) {
+    assert.equal(
+      detectMatchingThemePresetId(preset.variables, THEME_PRESETS),
+      preset.id
+    );
+  }
+});
+
+test('Saved Components helpers snapshot subtrees with styles/children and insert at any drop position', async () => {
+  const {
+    createSavedComponentEntry,
+    insertBlueprintAtTarget,
+    insertSavedComponentIntoTree,
+  } = await import('./editorLogic.ts');
+
+  const entry = createSavedComponentEntry(
+    INITIAL_NODES,
+    'hero-1',
+    'Custom Hero Snippet',
+    () => 'saved_1',
+    5000
+  );
+  assert.ok(entry);
+  assert.equal(entry.name, 'Custom Hero Snippet');
+  assert.equal(entry.nodeCount, 5);
+  assert.equal(entry.snapshot.children?.length, 4);
+
+  let seq = 1;
+  const droppedBefore = insertBlueprintAtTarget(
+    INITIAL_NODES,
+    entry.snapshot,
+    'hero-1',
+    'before',
+    () => `snip_${seq++}`
+  );
+  assert.equal(droppedBefore.createdId, 'snip_1');
+  assert.deepEqual(droppedBefore.nodes['root']?.children, ['snip_1', 'hero-1']);
+  assert.equal(droppedBefore.nodes['snip_1']?.name, 'Custom Hero Snippet');
+  assert.equal(droppedBefore.nodes['snip_1']?.children.length, 4);
+
+  const clickedInsert = insertSavedComponentIntoTree(
+    droppedBefore.nodes,
+    'root',
+    entry,
+    () => `click_${seq++}`
+  );
+  assert.ok(clickedInsert.createdId);
+  assert.equal(clickedInsert.nodes['root']?.children.length, 3);
+});
+
+test('Descriptive auto-naming derives Info Header for icon + text containers and Smart Layout replaces layout tokens', async () => {
+  const {
+    addIconNodeToTree,
+    applySmartLayoutClasses,
+    generateDescriptiveNodeName,
+  } = await import('./editorLogic.ts');
+
+  let seq = 1;
+  const withBox = addNodeToTree(INITIAL_NODES, 'root', 'Container', () => `box_${seq++}`);
+  assert.ok(withBox.createdId);
+  const boxId = withBox.createdId;
+  assert.equal(withBox.nodes[boxId]?.name, 'Kontener');
+
+  const withIcon = addIconNodeToTree(withBox.nodes, boxId, 'Info', () => `ico_${seq++}`);
+  assert.equal(withIcon.nodes[withIcon.createdId!]?.name, 'Info Icon');
+
+  const withText = addNodeToTree(withIcon.nodes, boxId, 'Text', () => `txt_${seq++}`);
+  assert.equal(withText.nodes[boxId]?.name, 'Info Header');
+  assert.equal(generateDescriptiveNodeName(withText.nodes, boxId), 'Info Header');
+
+  // Content update renames default-named Heading cleanly without touching manually named nodes
+  const withHeading = addNodeToTree(withText.nodes, 'root', 'Heading', () => `hd_${seq++}`);
+  const hId = withHeading.createdId!;
+  const updatedHeading = updateNodeInTree(withHeading.nodes, hId, 'content', 'Pricing Plans for Teams');
+  assert.equal(updatedHeading[hId]?.name, 'Pricing Plans for');
+
+  const manuallyNamed = updateNodeInTree(updatedHeading, boxId, 'name', 'My Locked Box');
+  const afterExtraBtn = addNodeToTree(manuallyNamed, boxId, 'Button', () => `extra_${seq++}`);
+  assert.equal(afterExtraBtn.nodes[boxId]?.name, 'My Locked Box');
+
+  // Smart layout replaces layout/gap/padding while keeping bg/border/rounded
+  const merged = applySmartLayoutClasses(
+    'p-4 bg-white border border-slate-200 rounded-2xl flex flex-col gap-3',
+    'grid grid-cols-1 md:grid-cols-2 gap-6 items-center max-w-4xl mx-auto'
+  );
+  assert.ok(merged.includes('bg-white'));
+  assert.ok(merged.includes('border-slate-200'));
+  assert.ok(merged.includes('rounded-2xl'));
+  assert.ok(merged.includes('grid-cols-1'));
+  assert.ok(merged.includes('md:grid-cols-2'));
+  assert.ok(merged.includes('gap-6'));
+  assert.ok(!merged.includes('flex-col'));
+  assert.ok(!merged.includes('gap-3'));
+  assert.ok(!merged.includes('p-4'));
+});
+
+test('Assets helpers classify images vs SVG icons, filter assets, and insert Base64 nodes cleanly without garbling data URIs', async () => {
+  const {
+    createImportedAssetRecord,
+    filterImportedAssets,
+    formatAssetFileNameToLabel,
+    formatBytes,
+    generateDescriptiveNodeName,
+    insertAssetAtTarget,
+    insertAssetIntoTree,
+    isSupportedAssetFile,
+  } = await import('./editorLogic.ts');
+
+  assert.equal(isSupportedAssetFile('image/png', 'photo.png'), true);
+  assert.equal(isSupportedAssetFile('image/svg+xml', 'spark.svg'), true);
+  assert.equal(isSupportedAssetFile('application/pdf', 'doc.pdf'), false);
+
+  assert.equal(formatAssetFileNameToLabel('hero-banner_v2.png'), 'Hero banner v2');
+  assert.equal(formatBytes(512), '512 B');
+  assert.equal(formatBytes(2048), '2.0 KB');
+
+  const pngAsset = createImportedAssetRecord(
+    {
+      fileName: 'team_photo.png',
+      mimeType: 'image/png',
+      dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      sizeBytes: 12800,
+    },
+    () => 'asset_png',
+    1000
+  );
+  assert.equal(pngAsset.kind, 'image');
+  assert.equal(pngAsset.name, 'Team photo');
+
+  const svgAsset = createImportedAssetRecord(
+    {
+      fileName: 'brand-logo.svg',
+      mimeType: 'image/svg+xml',
+      dataUrl: 'data:image/svg+xml;base64,PHN2Zy8+',
+      sizeBytes: 1450,
+    },
+    () => 'asset_svg',
+    2000
+  );
+  assert.equal(svgAsset.kind, 'icon');
+  assert.equal(svgAsset.name, 'Brand logo');
+
+  const allAssets = [pngAsset, svgAsset];
+  assert.equal(filterImportedAssets(allAssets, 'all', '').length, 2);
+  assert.equal(filterImportedAssets(allAssets, 'icon', '').length, 1);
+  assert.equal(filterImportedAssets(allAssets, 'image', 'team').length, 1);
+
+  const inserted = insertAssetIntoTree(
+    INITIAL_NODES,
+    'hero-1',
+    pngAsset,
+    () => 'img_node_1'
+  );
+  assert.equal(inserted.createdId, 'img_node_1');
+  const createdImg = inserted.nodes['img_node_1'];
+  assert.equal(createdImg?.type, 'Image');
+  assert.equal(createdImg?.name, 'Team photo');
+  assert.equal(createdImg?.props.src, pngAsset.dataUrl);
+  assert.equal(
+    generateDescriptiveNodeName(inserted.nodes, 'img_node_1'),
+    'Team photo'
+  );
+
+  // Changing another Image node src to a Base64 URI preserves its human label instead of turning base64 text into a name
+  const swapped = updateNodeInTree(
+    inserted.nodes,
+    'img_node_1',
+    'src',
+    svgAsset.dataUrl,
+    true
+  );
+  assert.equal(swapped['img_node_1']?.name, 'Team photo');
+
+  const droppedBefore = insertAssetAtTarget(
+    INITIAL_NODES,
+    svgAsset,
+    'hero-1',
+    'before',
+    () => 'icon_node_1'
+  );
+  assert.equal(droppedBefore.createdId, 'icon_node_1');
+  assert.deepEqual(droppedBefore.nodes['root']?.children, ['icon_node_1', 'hero-1']);
+  assert.ok(droppedBefore.nodes['icon_node_1']?.props.className?.includes('w-12 h-12'));
+});
+
+test('SEO Preview helpers format Google SERP breadcrumbs, extract canvas fallbacks, and enforce desktop/mobile character limits', async () => {
+  const {
+    SEO_DESCRIPTION_LIMIT_DESKTOP,
+    SEO_DESCRIPTION_LIMIT_MOBILE,
+    SEO_TITLE_LIMIT,
+    buildSeoPreviewData,
+    extractCanvasSeoFallbacks,
+    formatGoogleSerpBreadcrumb,
+  } = await import('./seoPreview.ts');
+
+  const fallbacks = extractCanvasSeoFallbacks(INITIAL_NODES);
+  assert.equal(fallbacks.heading, 'Zbuduj interfejs React wizualnie');
+  assert.ok(fallbacks.description.includes('Kliknij dowolny element'));
+
+  // Empty SEO metadata falls back cleanly to canvas heading/text + default host
+  const emptyPreview = buildSeoPreviewData(
+    { title: '', description: '', canonicalUrl: '' },
+    INITIAL_NODES,
+    'desktop'
+  );
+  assert.equal(emptyPreview.isUsingFallbackTitle, true);
+  assert.equal(emptyPreview.isUsingFallbackDescription, true);
+  assert.equal(emptyPreview.titleStatus, 'empty');
+  assert.equal(emptyPreview.descriptionStatus, 'empty');
+  assert.equal(emptyPreview.title, 'Zbuduj interfejs React wizualnie');
+  assert.equal(emptyPreview.siteName, 'example.com');
+  assert.equal(emptyPreview.displayUrl, 'https://example.com');
+
+  // Valid canonical URL with nested path builds Google breadcrumb
+  const breadcrumb = formatGoogleSerpBreadcrumb('https://www.acme.dev/docs/getting-started/');
+  assert.equal(breadcrumb.siteName, 'acme.dev');
+  assert.equal(
+    breadcrumb.displayUrl,
+    'https://www.acme.dev › docs › getting-started'
+  );
+
+  // Over-limit SEO metadata triggers truncation + 'too-long' status on Desktop & tighter truncation on Mobile
+  const longTitle = 'Ultra Modern Visual React UI Studio & Tailwind Design Builder Platform';
+  const longDesc =
+    'Build responsive production React interfaces visually with Flexbox, CSS Grid, instant theme tokens, saved component snippets, and clean export workflows across devices.';
+  assert.ok(longTitle.length > SEO_TITLE_LIMIT);
+  assert.ok(longDesc.length > SEO_DESCRIPTION_LIMIT_DESKTOP);
+
+  const desktopLong = buildSeoPreviewData(
+    { title: longTitle, description: longDesc, canonicalUrl: 'acme.dev/studio' },
+    INITIAL_NODES,
+    'desktop'
+  );
+  assert.equal(desktopLong.titleStatus, 'too-long');
+  assert.equal(desktopLong.descriptionStatus, 'too-long');
+  assert.ok(desktopLong.title.endsWith('…'));
+  assert.ok(desktopLong.title.length <= SEO_TITLE_LIMIT);
+  assert.ok(desktopLong.description.endsWith('…'));
+  assert.ok(desktopLong.description.length <= SEO_DESCRIPTION_LIMIT_DESKTOP);
+  assert.equal(desktopLong.displayUrl, 'https://acme.dev › studio');
+
+  const mobileMedium = buildSeoPreviewData(
+    {
+      title: 'React UI Studio',
+      description:
+        'Twórz interfejsy React wizualnie i eksportuj czysty kod Tailwind CSS bezpośrednio z przeglądarki w kilka chwil dla całego zespołu.',
+      canonicalUrl: 'https://studio.example.com/editor',
+    },
+    INITIAL_NODES,
+    'mobile'
+  );
+  assert.equal(mobileMedium.titleStatus, 'ok');
+  assert.equal(mobileMedium.descriptionStatus, 'too-long');
+  assert.equal(mobileMedium.descriptionMax, SEO_DESCRIPTION_LIMIT_MOBILE);
+  assert.ok(mobileMedium.description.length <= SEO_DESCRIPTION_LIMIT_MOBILE);
+});
+
+test('Grid Layout helpers manage grid-template-columns, grid-gap, auto-placement, child spans, and arbitrary CSS rules', async () => {
+  const {
+    buildArbitraryGridCssRules,
+    buildGridPreviewSummary,
+    extractCustomGridTemplateText,
+    formatCustomGapToToken,
+    formatCustomGridTemplateToToken,
+    getGridAutoCols,
+    getGridAutoFlow,
+    getGridAutoRows,
+    getGridChildSpan,
+    getGridColsToken,
+    getGridDisplayMode,
+    getGridGapState,
+    getGridPlaceContent,
+    getGridPlaceItems,
+    resetGridLayoutClasses,
+    setGridAutoCols,
+    setGridAutoFlow,
+    setGridAutoRows,
+    setGridAxisGap,
+    setGridChildSpan,
+    setGridColsToken,
+    setGridDisplayMode,
+    setGridPlaceContent,
+    setGridPlaceItems,
+    setGridUniformGap,
+  } = await import('./gridLayout.ts');
+
+  const initialCls = 'grid grid-cols-2 gap-4 items-start p-4 bg-white rounded-lg';
+
+  // Display mode + base & responsive grid-template-columns
+  const inlineCls = setGridDisplayMode(initialCls, 'inline-grid');
+  assert.equal(getGridDisplayMode(inlineCls), 'inline-grid');
+
+  const threeCols = setGridColsToken(inlineCls, 'grid-cols-3', '');
+  assert.equal(getGridColsToken(threeCols, ''), 'grid-cols-3');
+  assert.ok(threeCols.includes('inline-grid'));
+  assert.ok(threeCols.includes('p-4'));
+
+  const responsiveCols = setGridColsToken(threeCols, 'lg:grid-cols-6', 'lg');
+  assert.equal(getGridColsToken(responsiveCols, ''), 'grid-cols-3');
+  assert.equal(getGridColsToken(responsiveCols, 'lg'), 'lg:grid-cols-6');
+
+  // Custom arbitrary grid-template-columns formatting & extraction
+  const customToken = formatCustomGridTemplateToToken('200px 1fr 2fr');
+  assert.equal(customToken, 'grid-cols-[200px_1fr_2fr]');
+  assert.equal(extractCustomGridTemplateText(customToken), '200px 1fr 2fr');
+
+  const customColsCls = setGridColsToken(responsiveCols, customToken, '');
+  assert.equal(getGridColsToken(customColsCls, ''), 'grid-cols-[200px_1fr_2fr]');
+  assert.equal(getGridColsToken(customColsCls, 'lg'), 'lg:grid-cols-6');
+
+  // Grid gap uniform -> split axis preservation -> uniform reset
+  assert.deepEqual(getGridGapState(customColsCls), {
+    mode: 'uniform',
+    uniform: 'gap-4',
+    x: '',
+    y: '',
+  });
+
+  const splitGapX = setGridAxisGap(customColsCls, 'x', 'gap-x-8');
+  assert.deepEqual(getGridGapState(splitGapX), {
+    mode: 'split',
+    uniform: '',
+    x: 'gap-x-8',
+    y: 'gap-y-4',
+  });
+
+  const splitGapBoth = setGridAxisGap(splitGapX, 'y', 'gap-y-2');
+  assert.deepEqual(getGridGapState(splitGapBoth), {
+    mode: 'split',
+    uniform: '',
+    x: 'gap-x-8',
+    y: 'gap-y-2',
+  });
+
+  const customGapCls = setGridUniformGap(
+    splitGapBoth,
+    formatCustomGapToToken('18px')
+  );
+  assert.deepEqual(getGridGapState(customGapCls), {
+    mode: 'uniform',
+    uniform: 'gap-[18px]',
+    x: '',
+    y: '',
+  });
+
+  // Auto-placement controls (flow, auto-cols, auto-rows, place-items, place-content)
+  let autoCls = setGridAutoFlow(customGapCls, 'grid-flow-row-dense');
+  autoCls = setGridAutoCols(autoCls, 'auto-cols-fr');
+  autoCls = setGridAutoRows(autoCls, 'auto-rows-min');
+  autoCls = setGridPlaceItems(`${autoCls} items-start`, 'place-items-center');
+  autoCls = setGridPlaceContent(autoCls, 'place-content-between');
+
+  assert.equal(getGridAutoFlow(autoCls), 'grid-flow-row-dense');
+  assert.equal(getGridAutoCols(autoCls), 'auto-cols-fr');
+  assert.equal(getGridAutoRows(autoCls), 'auto-rows-min');
+  assert.equal(getGridPlaceItems(autoCls), 'place-items-center');
+  assert.ok(!autoCls.split(/\s+/).includes('items-start'));
+  assert.equal(getGridPlaceContent(autoCls), 'place-content-between');
+
+  const summary = buildGridPreviewSummary(autoCls);
+  assert.equal(summary.colsLabel, 'grid-cols-[200px_1fr_2fr]');
+  assert.equal(summary.gapLabel, 'gap-[18px]');
+  assert.equal(summary.flowLabel, 'row-dense');
+
+  // Arbitrary CSS rules generation for custom user templates & gaps
+  const css = buildArbitraryGridCssRules({
+    ...INITIAL_NODES,
+    grid1: {
+      id: 'grid1',
+      type: 'Grid',
+      name: 'Custom Grid',
+      parentId: 'root',
+      props: { className: autoCls },
+      children: [],
+    },
+  });
+  assert.ok(css.includes('@layer utilities'));
+  assert.ok(css.includes(':where(.grid-cols-'));
+  assert.ok(css.includes('grid-template-columns: 200px 1fr 2fr;'));
+  assert.ok(css.includes('gap: 18px;'));
+
+  // Child span management & grid reset preserving padding/surface classes
+  const childSpanCls = setGridChildSpan(
+    setGridChildSpan('p-4 bg-white', 'col', 'col-span-2'),
+    'row',
+    'row-span-full'
+  );
+  assert.equal(getGridChildSpan(childSpanCls, 'col'), 'col-span-2');
+  assert.equal(getGridChildSpan(childSpanCls, 'row'), 'row-span-full');
+
+  const resetCls = resetGridLayoutClasses(autoCls);
+  assert.equal(getGridColsToken(resetCls, ''), 'grid-cols-2');
+  assert.equal(getGridGapState(resetCls).uniform, 'gap-4');
+  assert.equal(getGridAutoFlow(resetCls), '');
+  assert.ok(resetCls.includes('p-4'));
+  assert.ok(resetCls.includes('bg-white'));
+});
+
+test('Theme Usage helpers extract used CSS variables, resolve ancestor overrides, and scope local overrides', async () => {
+  const { DEFAULT_THEME_VARS } = await import('../constants/editorDefaults.ts');
+  const {
+    analyzeNodeThemeUsage,
+    buildScopedThemeOverrideCssRules,
+    clearAllNodeThemeOverridesInTree,
+    setNodeThemeOverrideInTree,
+  } = await import('./themeUsage.ts');
+  const { buildThemeCssRules } = await import('./editorLogic.ts');
+  const { generateHtmlExport } = await import('./exportFormats.ts');
+
+  let tree: typeof INITIAL_NODES = {
+    ...INITIAL_NODES,
+    card_1: {
+      id: 'card_1',
+      type: 'Container',
+      name: 'Karta Promo',
+      parentId: 'root',
+      props: {
+        className: 'p-6 bg-[var(--color-surface)] border border-[var(--color-primary)]',
+      },
+      children: ['btn_1'],
+    },
+    btn_1: {
+      id: 'btn_1',
+      type: 'Button',
+      name: 'Przycisk CTA',
+      content: 'Kup teraz',
+      parentId: 'card_1',
+      props: {
+        className:
+          'px-4 py-2 bg-[var(--color-primary)] text-[length:var(--font-size-body)] text-white',
+      },
+      children: [],
+    },
+    root: {
+      ...INITIAL_NODES.root,
+      children: [...INITIAL_NODES.root.children, 'card_1'],
+    },
+  };
+
+  // Analyze direct variable usage on btn_1 before any overrides
+  const initialReport = analyzeNodeThemeUsage(tree.btn_1, tree, DEFAULT_THEME_VARS);
+  assert.ok(initialReport);
+  assert.equal(initialReport.usedCount, 2);
+  assert.equal(initialReport.overriddenCount, 0);
+  assert.deepEqual(
+    initialReport.items.map((i) => i.varName),
+    ['--color-primary', '--font-size-body']
+  );
+  assert.deepEqual(initialReport.items[0]?.channels, ['Bg']);
+  assert.equal(initialReport.items[0]?.effectiveValue, '#2563eb');
+
+  // Override --color-primary on parent container card_1 -> btn_1 inherits it
+  tree = setNodeThemeOverrideInTree(tree, 'card_1', '--color-primary', '#059669');
+  const inheritedReport = analyzeNodeThemeUsage(tree.btn_1, tree, DEFAULT_THEME_VARS);
+  assert.ok(inheritedReport);
+  assert.equal(inheritedReport.items[0]?.inheritedValue, '#059669');
+  assert.equal(inheritedReport.items[0]?.effectiveValue, '#059669');
+  assert.equal(inheritedReport.items[0]?.isLocallyOverridden, false);
+
+  // Locally override --color-primary directly on btn_1 -> local wins over ancestor
+  tree = setNodeThemeOverrideInTree(tree, 'btn_1', '--color-primary', '#e11d48');
+  const localReport = analyzeNodeThemeUsage(tree.btn_1, tree, DEFAULT_THEME_VARS);
+  assert.ok(localReport);
+  assert.equal(localReport.overriddenCount, 1);
+  assert.equal(localReport.items[0]?.localOverride, '#e11d48');
+  assert.equal(localReport.items[0]?.effectiveValue, '#e11d48');
+  assert.equal(localReport.items[0]?.isLocallyOverridden, true);
+
+  // Scoped CSS rules emitted cleanly
+  const scopedCss = buildScopedThemeOverrideCssRules(tree);
+  assert.ok(scopedCss.includes('[data-node-id="btn_1"]'));
+  assert.ok(scopedCss.includes('--color-primary: #e11d48;'));
+
+  const combinedThemeCss = buildThemeCssRules(DEFAULT_THEME_VARS, tree);
+  assert.ok(combinedThemeCss.includes(':root {'));
+  assert.ok(combinedThemeCss.includes('[data-node-id="btn_1"]'));
+
+  // Exported HTML preserves local overrides via data-theme-scope
+  const exportedHtml = generateHtmlExport(tree, DEFAULT_THEME_VARS);
+  assert.ok(exportedHtml.includes('data-theme-scope="btn_1"'));
+  assert.ok(exportedHtml.includes('[data-theme-scope="btn_1"]'));
+
+  // Clear local overrides on btn_1 restores clean node without themeOverrides
+  tree = clearAllNodeThemeOverridesInTree(tree, 'btn_1');
+  assert.equal(tree.btn_1.themeOverrides, undefined);
+});
+
+test('Sitemap generator builds hierarchical XML sitemap from component tree and SEO canonical URL', async () => {
+  const {
+    buildSitemapEntries,
+    extractSitemapBaseOrigin,
+    generateXmlSitemap,
+    slugifySitemapSegment,
+  } = await import('./sitemap.ts');
+
+  assert.equal(extractSitemapBaseOrigin(''), 'https://example.com');
+  assert.equal(
+    extractSitemapBaseOrigin('https://studio.example.pl/app/'),
+    'https://studio.example.pl'
+  );
+  assert.equal(slugifySitemapSegment('Cześć Świat & Łódź!'), 'czesc-swiat-lodz');
+
+  const tree: typeof INITIAL_NODES = {
+    ...INITIAL_NODES,
+    pricing_sec: {
+      id: 'pricing_sec',
+      type: 'Container',
+      name: 'Cennik',
+      parentId: 'root',
+      props: { className: 'p-8' },
+      children: ['pricing_heading'],
+    },
+    pricing_heading: {
+      id: 'pricing_heading',
+      type: 'Heading',
+      name: 'Plany cenowe',
+      content: 'Plany cenowe',
+      parentId: 'pricing_sec',
+      props: { className: 'text-2xl' },
+      children: [],
+    },
+    root: {
+      ...INITIAL_NODES.root,
+      children: [...INITIAL_NODES.root.children, 'pricing_sec'],
+    },
+  };
+
+  const seo = {
+    title: 'React UI Studio',
+    description: 'Opis SEO',
+    canonicalUrl: 'https://acme-ui.dev/landing',
+  };
+
+  const entries = buildSitemapEntries(tree, seo, {
+    scope: 'sections',
+    changefreq: 'daily',
+    includeLastmod: true,
+    lastmodDate: '2026-11-19',
+  });
+
+  assert.equal(entries[0]?.loc, 'https://acme-ui.dev/landing');
+  assert.equal(entries[0]?.priority, '1.0');
+  assert.ok(
+    entries.some((e) => e.loc === 'https://acme-ui.dev/landing/plany-cenowe' && e.priority === '0.8'),
+    'Expected section URL derived from container heading'
+  );
+
+  const { xml } = generateXmlSitemap(tree, seo, {
+    scope: 'sections',
+    changefreq: 'daily',
+    includeLastmod: true,
+    lastmodDate: '2026-11-19',
+  });
+
+  assert.ok(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'));
+  assert.ok(xml.includes('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'));
+  assert.ok(xml.includes('<loc>https://acme-ui.dev/landing</loc>'));
+  assert.ok(xml.includes('<lastmod>2026-11-19</lastmod>'));
+  assert.ok(xml.includes('<changefreq>daily</changefreq>'));
+  assert.ok(xml.includes('</urlset>'));
+});
+
+test('Design Lint scans subtree for hardcoded colors, spacing, and typography and Fix All normalizes tokens cleanly', async () => {
+  const { DEFAULT_THEME_VARS } = await import('../constants/editorDefaults.ts');
+  const {
+    applyDesignLintFix,
+    collectSubtreeNodeIds,
+    fixAllDesignLintIssues,
+    lintNodeTree,
+  } = await import('./designLint.ts');
+
+  const subtreeIds = collectSubtreeNodeIds(INITIAL_NODES, 'hero-1');
+  assert.ok(subtreeIds.includes('hero-1'));
+  assert.ok(subtreeIds.includes('btn-1'));
+  assert.ok(!subtreeIds.includes('root'));
+
+  // INITIAL_NODES has multiple hardcoded colors, spacing (py-2.5), and typography (text-3xl, text-base)
+  const initialReport = lintNodeTree(INITIAL_NODES, 'root', DEFAULT_THEME_VARS);
+  assert.ok(initialReport.issues.length >= 6);
+  assert.ok(initialReport.countsByCategory.color > 0);
+  assert.ok(initialReport.countsByCategory.spacing > 0);
+  assert.ok(initialReport.countsByCategory.typography > 0);
+  assert.ok(
+    initialReport.issues.some((i) => i.nodeId === 'btn-1' && i.token === 'py-2.5' && i.replacement === 'py-2')
+  );
+
+  // Custom node with arbitrary hex color, arbitrary px spacing, arbitrary px font size, plus badge collision test
+  const customTree: typeof INITIAL_NODES = {
+    ...INITIAL_NODES,
+    custom_box: {
+      id: 'custom_box',
+      type: 'Container',
+      name: 'Karta Testowa',
+      parentId: 'root',
+      props: {
+        className: 'p-[17px] bg-[#e11d48] text-slate-900 border-slate-200 text-[22px]',
+      },
+      children: ['custom_badge'],
+    },
+    custom_badge: {
+      id: 'custom_badge',
+      type: 'Badge',
+      name: 'Plakietka',
+      content: 'Nowość',
+      parentId: 'custom_box',
+      props: {
+        className: 'bg-blue-100 text-blue-700 px-3 py-1',
+      },
+      children: [],
+    },
+    root: {
+      ...INITIAL_NODES.root,
+      children: [...INITIAL_NODES.root.children, 'custom_box'],
+    },
+  };
+
+  const customReport = lintNodeTree(customTree, 'custom_box', DEFAULT_THEME_VARS);
+  assert.equal(customReport.scannedNodeCount, 2);
+
+  const spacingIssue = customReport.issues.find(
+    (i) => i.nodeId === 'custom_box' && i.token === 'p-[17px]'
+  );
+  assert.equal(spacingIssue?.replacement, 'p-4');
+
+  const sizeIssue = customReport.issues.find(
+    (i) => i.nodeId === 'custom_box' && i.token === 'text-[22px]'
+  );
+  assert.equal(sizeIssue?.replacement, 'text-[length:var(--font-size-body)]');
+
+  // Verify badge bg-blue-100 and text-blue-700 do not collide onto the exact same variable
+  const badgeBg = customReport.issues.find(
+    (i) => i.nodeId === 'custom_badge' && i.token === 'bg-blue-100'
+  );
+  const badgeText = customReport.issues.find(
+    (i) => i.nodeId === 'custom_badge' && i.token === 'text-blue-700'
+  );
+  assert.ok(badgeBg?.replacement);
+  assert.ok(badgeText?.replacement);
+  assert.notEqual(
+    badgeBg.replacement.replace('bg-', ''),
+    badgeText.replacement.replace('text-', '')
+  );
+
+  // Single-issue fix updates only target token
+  const afterSingle = applyDesignLintFix(customTree, spacingIssue!);
+  assert.ok(afterSingle.custom_box.props.className?.includes('p-4'));
+  assert.ok(!afterSingle.custom_box.props.className?.includes('p-[17px]'));
+  assert.ok(afterSingle.custom_box.props.className?.includes('bg-[#e11d48]'));
+
+  // Fix All resolves all fixable issues across subtree and leaves 0 fixable issues
+  const { nodes: fixedTree, fixedCount } = fixAllDesignLintIssues(
+    customTree,
+    'custom_box',
+    DEFAULT_THEME_VARS
+  );
+  assert.ok(fixedCount >= 6);
+  assert.ok(fixedTree.custom_box.props.className?.includes('p-4'));
+  assert.ok(fixedTree.custom_box.props.className?.includes('bg-[var('));
+  assert.ok(fixedTree.custom_box.props.className?.includes('text-[var('));
+  assert.ok(fixedTree.custom_box.props.className?.includes('border-[var('));
+  assert.ok(fixedTree.custom_box.props.className?.includes('text-[length:var('));
+  const boxBgVar = fixedTree.custom_box.props.className?.match(/bg-\[var\((--[^)]+)\)\]/)?.[1];
+  const boxTextVar = fixedTree.custom_box.props.className?.match(/text-\[var\((--[^)]+)\)\]/)?.[1];
+  assert.ok(boxBgVar && boxTextVar && boxBgVar !== boxTextVar);
+
+  const postFixReport = lintNodeTree(fixedTree, 'custom_box', DEFAULT_THEME_VARS);
+  assert.equal(postFixReport.fixableCount, 0);
+  assert.equal(postFixReport.issues.length, 0);
+});
+
+test('Canvas ruler math generates zoomed ticks, computes selection bands, and converts client coords', async () => {
+  const {
+    clientCoordToCanvasPx,
+    computeAxisSelectionBand,
+    generateRulerTicks,
+    getRulerIntervals,
+  } = await import('./rulers.ts');
+
+  assert.deepEqual(getRulerIntervals(1), { major: 100, medium: 50, minor: 10 });
+  assert.deepEqual(getRulerIntervals(0.75), { major: 100, medium: 50, minor: 25 });
+  assert.deepEqual(getRulerIntervals(1.5), { major: 100, medium: 50, minor: 10 });
+
+  const ticksAt1x = generateRulerTicks(0, 120, 1);
+  const tick0 = ticksAt1x.find((t) => t.canvasPx === 0);
+  const tick50 = ticksAt1x.find((t) => t.canvasPx === 50);
+  const tick10 = ticksAt1x.find((t) => t.canvasPx === 10);
+  const tick100 = ticksAt1x.find((t) => t.canvasPx === 100);
+
+  assert.equal(tick0?.kind, 'major');
+  assert.equal(tick0?.label, '0');
+  assert.equal(tick0?.screenOffsetPx, 0);
+  assert.equal(tick50?.kind, 'medium');
+  assert.equal(tick50?.label, undefined);
+  assert.equal(tick10?.kind, 'minor');
+  assert.equal(tick100?.kind, 'major');
+  assert.equal(tick100?.label, '100');
+  assert.equal(tick100?.screenOffsetPx, 100);
+
+  const ticksAt150 = generateRulerTicks(0, 100, 1.5);
+  assert.equal(ticksAt150.find((t) => t.canvasPx === 100)?.screenOffsetPx, 150);
+
+  assert.equal(computeAxisSelectionBand(100, 0, 80, 1), null);
+  const band = computeAxisSelectionBand(250, 300, 100, 1.5);
+  assert.deepEqual(band, {
+    canvasStartPx: 100,
+    canvasSizePx: 200,
+    screenStartPx: 150,
+    screenSizePx: 300,
+  });
+
+  assert.equal(clientCoordToCanvasPx(250, 100, 1.5), 100);
+  assert.equal(clientCoordToCanvasPx(80, 100, 1), -20);
+});
+
+test('removeRecentComponentSearch and normalizeRecentSearchesStorage manage persisted search history cleanly', async () => {
+  const {
+    normalizeRecentSearchesStorage,
+    removeRecentComponentSearch,
+  } = await import('./editorLogic.ts');
+
+  const sample = [
+    { type: 'Grid' as const, label: 'Grid', query: 'grid', timestamp: 100 },
+    { type: 'Button' as const, label: 'Przycisk', query: 'przycisk', timestamp: 90 },
+  ];
+
+  const afterRemove = removeRecentComponentSearch(sample, 'Grid', '  GRID ');
+  assert.equal(afterRemove.length, 1);
+  assert.equal(afterRemove[0]?.type, 'Button');
+
+  assert.deepEqual(normalizeRecentSearchesStorage('invalid-json-shape'), []);
+
+  const normalized = normalizeRecentSearchesStorage(
+    [
+      null,
+      { type: 'Grid', label: 'Grid', query: '   ', timestamp: 10 },
+      { type: 'Grid', label: 'Grid', query: '  siatka ', timestamp: 200 },
+      { type: 'Grid', label: 'Grid', query: 'duplicate-type', timestamp: 210 },
+      { type: 'Button', label: 'Przycisk', query: 'cta' },
+      { type: 'Text', label: 'Tekst', query: 'akapit', timestamp: 300 },
+    ],
+    2
+  );
+
+  assert.equal(normalized.length, 2);
+  assert.equal(normalized[0]?.type, 'Grid');
+  assert.equal(normalized[0]?.query, 'siatka');
+  assert.equal(normalized[0]?.timestamp, 200);
+  assert.equal(normalized[1]?.type, 'Button');
+  assert.equal(normalized[1]?.query, 'cta');
+  assert.equal(typeof normalized[1]?.timestamp, 'number');
+});
+
+test('duplicateNodeInTree appends incrementing Copy 1 / Copy 2 suffixes and avoids nested Copy chains', async () => {
+  const {
+    duplicateNodeInTree,
+    getNextDuplicateNodeName,
+    insertCardPresetAtTarget,
+    insertNewNodeAtTarget,
+  } = await import('./editorLogic.ts');
+
+  let seq = 0;
+  const idFactory = () => `dup_${++seq}`;
+
+  // Start with a node explicitly named 'Button'
+  let tree: typeof INITIAL_NODES = {
+    ...INITIAL_NODES,
+    btn_plain: {
+      id: 'btn_plain',
+      type: 'Button',
+      name: 'Button',
+      content: 'Click',
+      parentId: 'hero-1',
+      props: { className: 'px-4 py-2' },
+      children: [],
+    },
+    'hero-1': {
+      ...INITIAL_NODES['hero-1'],
+      children: [...INITIAL_NODES['hero-1'].children, 'btn_plain'],
+    },
+  };
+
+  // First duplicate of 'Button' -> 'Button Copy 1'
+  const firstDup = duplicateNodeInTree(tree, 'btn_plain', idFactory);
+  assert.ok(firstDup.createdId);
+  assert.equal(firstDup.nodes[firstDup.createdId]?.name, 'Button Copy 1');
+  tree = firstDup.nodes;
+
+  // Second duplicate of 'Button' -> 'Button Copy 2'
+  const secondDup = duplicateNodeInTree(tree, 'btn_plain', idFactory);
+  assert.ok(secondDup.createdId);
+  assert.equal(secondDup.nodes[secondDup.createdId]?.name, 'Button Copy 2');
+  tree = secondDup.nodes;
+
+  // Duplicating 'Button Copy 1' -> 'Button Copy 3' (strips Copy 1 base, picks next free index)
+  const cloneOfCopy = duplicateNodeInTree(tree, firstDup.createdId, idFactory);
+  assert.ok(cloneOfCopy.createdId);
+  assert.equal(cloneOfCopy.nodes[cloneOfCopy.createdId]?.name, 'Button Copy 3');
+
+  // Empty name helper fallback
+  assert.equal(getNextDuplicateNodeName('', new Set()), 'Element Copy 1');
+
+  // Empty root canvas drop helpers insert basic components & card preset cleanly
+  const emptyTree: typeof INITIAL_NODES = {
+    root: {
+      ...INITIAL_NODES.root,
+      children: [],
+    },
+  };
+  const droppedBtn = insertNewNodeAtTarget(emptyTree, 'Button', 'root', 'inside', idFactory);
+  assert.ok(droppedBtn.createdId);
+  assert.deepEqual(droppedBtn.nodes.root.children, [droppedBtn.createdId]);
+
+  const droppedCard = insertCardPresetAtTarget(droppedBtn.nodes, droppedBtn.createdId, 'before', idFactory);
+  assert.ok(droppedCard.createdId);
+  assert.deepEqual(droppedCard.nodes.root.children, [droppedCard.createdId, droppedBtn.createdId]);
+});
+
+
 
 

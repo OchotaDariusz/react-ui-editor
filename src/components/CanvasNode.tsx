@@ -1,10 +1,16 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
-import { GripVertical, Image as ImageIcon } from 'lucide-react';
+import { ArrowLeft, GripVertical, Image as ImageIcon, Layers } from 'lucide-react';
 import {
+  DND_ASSET_TYPE,
   DND_ITEM_TYPE,
+  DND_NEW_CARD_PRESET_TYPE,
+  DND_NEW_COMPONENT_TYPE,
   DND_NEW_ICON_TYPE,
+  DND_SAVED_COMPONENT_TYPE,
   type EditorNode,
+  type ImportedAsset,
+  type NodeBlueprint,
   type NodesMap,
   type NodeType,
 } from '../types/editor';
@@ -21,7 +27,11 @@ interface DragItem {
   id?: string;
   parentId?: string | null;
   type?: NodeType;
+  newComponentType?: NodeType;
+  isCardPreset?: boolean;
   iconName?: string;
+  savedBlueprint?: NodeBlueprint;
+  asset?: ImportedAsset;
 }
 
 interface CanvasNodeProps {
@@ -33,7 +43,23 @@ interface CanvasNodeProps {
   showGuides: boolean;
   onSelect: (id: string, additive?: boolean) => void;
   onMoveNode: (dragId: string, targetId: string, position: DropPosition) => void;
+  onDropNewComponent?: (
+    nodeType: NodeType,
+    targetId: string,
+    position: DropPosition
+  ) => void;
+  onDropCardPreset?: (targetId: string, position: DropPosition) => void;
   onDropNewIcon: (iconName: string, targetId: string, position: DropPosition) => void;
+  onDropSavedComponent: (
+    blueprint: NodeBlueprint,
+    targetId: string,
+    position: DropPosition
+  ) => void;
+  onDropAsset: (
+    asset: ImportedAsset,
+    targetId: string,
+    position: DropPosition
+  ) => void;
 }
 
 function isHorizontalLayout(parentNode: EditorNode | undefined): boolean {
@@ -85,7 +111,11 @@ export const CanvasNode = memo(function CanvasNode({
   showGuides,
   onSelect,
   onMoveNode,
+  onDropNewComponent,
+  onDropCardPreset,
   onDropNewIcon,
+  onDropSavedComponent,
+  onDropAsset,
 }: CanvasNodeProps) {
   const node = nodes[id];
   const parentNode = node?.parentId ? nodes[node.parentId] : undefined;
@@ -124,11 +154,31 @@ export const CanvasNode = memo(function CanvasNode({
     { isOverShallow: boolean }
   >(
     () => ({
-      accept: [DND_ITEM_TYPE, DND_NEW_ICON_TYPE],
+      accept: [
+        DND_ITEM_TYPE,
+        DND_NEW_COMPONENT_TYPE,
+        DND_NEW_CARD_PRESET_TYPE,
+        DND_NEW_ICON_TYPE,
+        DND_SAVED_COMPONENT_TYPE,
+        DND_ASSET_TYPE,
+      ],
       canDrop: (item, monitor) => {
         if (previewMode || !node) return false;
-        if (monitor.getItemType() === DND_NEW_ICON_TYPE) {
+        const itemType = monitor.getItemType();
+        if (itemType === DND_NEW_COMPONENT_TYPE) {
+          return Boolean(item.newComponentType);
+        }
+        if (itemType === DND_NEW_CARD_PRESET_TYPE) {
+          return Boolean(item.isCardPreset);
+        }
+        if (itemType === DND_NEW_ICON_TYPE) {
           return Boolean(item.iconName);
+        }
+        if (itemType === DND_SAVED_COMPONENT_TYPE) {
+          return Boolean(item.savedBlueprint);
+        }
+        if (itemType === DND_ASSET_TYPE) {
+          return Boolean(item.asset);
         }
         if (!item.id || item.id === id) return false;
         if (isDescendantOrSelf(nodes, id, item.id)) return false;
@@ -139,8 +189,17 @@ export const CanvasNode = memo(function CanvasNode({
           setDropPosition(null);
           return;
         }
-        const isNewIcon = monitor.getItemType() === DND_NEW_ICON_TYPE;
-        if (!isNewIcon && (!item.id || item.id === id || isDescendantOrSelf(nodes, id, item.id))) {
+        const itemType = monitor.getItemType();
+        const isPaletteItem =
+          itemType === DND_NEW_COMPONENT_TYPE ||
+          itemType === DND_NEW_CARD_PRESET_TYPE ||
+          itemType === DND_NEW_ICON_TYPE ||
+          itemType === DND_SAVED_COMPONENT_TYPE ||
+          itemType === DND_ASSET_TYPE;
+        if (
+          !isPaletteItem &&
+          (!item.id || item.id === id || isDescendantOrSelf(nodes, id, item.id))
+        ) {
           setDropPosition(null);
           return;
         }
@@ -157,8 +216,20 @@ export const CanvasNode = memo(function CanvasNode({
       },
       drop: (item, monitor) => {
         if (monitor.didDrop() || !node) return;
-        const isNewIcon = monitor.getItemType() === DND_NEW_ICON_TYPE;
-        if (!isNewIcon && (!item.id || item.id === id || isDescendantOrSelf(nodes, id, item.id))) {
+        const itemType = monitor.getItemType();
+        const isNewComponent = itemType === DND_NEW_COMPONENT_TYPE;
+        const isCardPreset = itemType === DND_NEW_CARD_PRESET_TYPE;
+        const isNewIcon = itemType === DND_NEW_ICON_TYPE;
+        const isSavedComponent = itemType === DND_SAVED_COMPONENT_TYPE;
+        const isAsset = itemType === DND_ASSET_TYPE;
+        if (
+          !isNewComponent &&
+          !isCardPreset &&
+          !isNewIcon &&
+          !isSavedComponent &&
+          !isAsset &&
+          (!item.id || item.id === id || isDescendantOrSelf(nodes, id, item.id))
+        ) {
           return;
         }
 
@@ -173,8 +244,16 @@ export const CanvasNode = memo(function CanvasNode({
           : dropPosition || (isContainerNodeType(node.type) ? 'inside' : 'after');
 
         setDropPosition(null);
-        if (isNewIcon && item.iconName) {
+        if (isNewComponent && item.newComponentType) {
+          onDropNewComponent?.(item.newComponentType, id, pos);
+        } else if (isCardPreset && item.isCardPreset) {
+          onDropCardPreset?.(id, pos);
+        } else if (isNewIcon && item.iconName) {
           onDropNewIcon(item.iconName, id, pos);
+        } else if (isSavedComponent && item.savedBlueprint) {
+          onDropSavedComponent(item.savedBlueprint, id, pos);
+        } else if (isAsset && item.asset) {
+          onDropAsset(item.asset, id, pos);
         } else if (item.id) {
           onMoveNode(item.id, id, pos);
         }
@@ -183,7 +262,20 @@ export const CanvasNode = memo(function CanvasNode({
         isOverShallow: monitor.isOver({ shallow: true }),
       }),
     }),
-    [id, node, parentNode, nodes, previewMode, dropPosition, onMoveNode, onDropNewIcon]
+    [
+      id,
+      node,
+      parentNode,
+      nodes,
+      previewMode,
+      dropPosition,
+      onMoveNode,
+      onDropNewComponent,
+      onDropCardPreset,
+      onDropNewIcon,
+      onDropSavedComponent,
+      onDropAsset,
+    ]
   );
 
   useEffect(() => {
@@ -300,7 +392,39 @@ export const CanvasNode = memo(function CanvasNode({
           onClick={handleClick}
         >
           {dragHandle}
-          {node.children.length === 0 && !previewMode && (
+          {node.children.length === 0 && !previewMode && isRoot && (
+            <div
+              data-testid="empty-canvas-cue"
+              className={`flex-1 flex flex-col items-center justify-center min-h-[420px] px-6 py-12 text-center border-2 border-dashed rounded-xl transition-colors pointer-events-none select-none col-span-full ${
+                isOverShallow
+                  ? 'border-blue-400 bg-blue-50/60'
+                  : 'border-slate-300/90 bg-slate-50/50'
+              }`}
+            >
+              <div
+                className={`w-12 h-12 rounded-xl border flex items-center justify-center mb-4 transition-colors ${
+                  isOverShallow
+                    ? 'bg-blue-100 border-blue-300 text-blue-700'
+                    : 'bg-white border-slate-200 text-slate-600 shadow-xs'
+                }`}
+              >
+                <Layers className="w-5 h-5" aria-hidden="true" />
+              </div>
+              <h3 className="text-sm font-semibold text-slate-800 mb-1.5">
+                {isOverShallow
+                  ? 'Upuść element na płótno'
+                  : 'Płótno jest jeszcze puste'}
+              </h3>
+              <p className="text-xs text-slate-500 max-w-sm leading-relaxed mb-3">
+                Przeciągnij elementy z lewego panelu na obszar roboczy, aby rozpocząć budowanie interfejsu.
+              </p>
+              <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-blue-600">
+                <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Wybierz lub przeciągnij komponent z panelu po lewej</span>
+              </div>
+            </div>
+          )}
+          {node.children.length === 0 && !previewMode && !isRoot && (
             <span className="text-xs text-slate-400 pointer-events-none select-none italic col-span-full">
               {node.type === 'Grid' ? 'Pusty grid' : 'Pusty kontener'} (
               {node.name || node.id})
@@ -317,7 +441,11 @@ export const CanvasNode = memo(function CanvasNode({
               showGuides={showGuides}
               onSelect={onSelect}
               onMoveNode={onMoveNode}
+              onDropNewComponent={onDropNewComponent}
+              onDropCardPreset={onDropCardPreset}
               onDropNewIcon={onDropNewIcon}
+              onDropSavedComponent={onDropSavedComponent}
+              onDropAsset={onDropAsset}
             />
           ))}
         </div>

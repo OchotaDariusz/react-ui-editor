@@ -1,5 +1,6 @@
 import type { NodesMap, SeoMetadata, ThemeVariable } from '../types/editor';
 import { buildThemeCssRules, isContainerNodeType } from './editorLogic';
+import { buildScopedThemeOverrideCssRules } from './themeUsage';
 
 export type CodePreviewFormat = 'react' | 'html' | 'svg';
 
@@ -60,7 +61,12 @@ const buildNodeHtml = (
   if (!node) return '';
   const props = node.props || {};
   const cleanClass = (props.className || '').replace(/\s+/g, ' ').trim();
+  const hasOverrides =
+    node.themeOverrides && Object.keys(node.themeOverrides).length > 0;
   let attrStr = cleanClass ? ` class="${escapeXmlAttr(cleanClass)}"` : '';
+  if (hasOverrides) {
+    attrStr += ` data-theme-scope="${escapeXmlAttr(id)}"`;
+  }
 
   if (node.type === 'Input' && props.placeholder) {
     attrStr += ` placeholder="${escapeXmlAttr(props.placeholder)}"`;
@@ -121,7 +127,14 @@ export const generateHtmlExport = (
   const title = seo?.title?.trim() || 'React UI Studio Export';
   const description = seo?.description?.trim() || '';
   const canonicalUrl = seo?.canonicalUrl?.trim() || '';
-  const themeCss = buildThemeCssRules(themeVars);
+  const baseThemeCss = buildThemeCssRules(themeVars);
+  const scopedOverridesCss = buildScopedThemeOverrideCssRules(
+    nodes,
+    'data-theme-scope'
+  );
+  const themeCss = [baseThemeCss, scopedOverridesCss]
+    .filter(Boolean)
+    .join('\n');
 
   const headLines: string[] = [
     '  <meta charset="UTF-8" />',
