@@ -28,9 +28,10 @@ interface CanvasNodeProps {
   id: string;
   nodes: NodesMap;
   selectedId: string;
+  selectedIds: string[];
   previewMode: boolean;
   showGuides: boolean;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, additive?: boolean) => void;
   onMoveNode: (dragId: string, targetId: string, position: DropPosition) => void;
   onDropNewIcon: (iconName: string, targetId: string, position: DropPosition) => void;
 }
@@ -79,6 +80,7 @@ export const CanvasNode = memo(function CanvasNode({
   id,
   nodes,
   selectedId,
+  selectedIds,
   previewMode,
   showGuides,
   onSelect,
@@ -210,27 +212,30 @@ export const CanvasNode = memo(function CanvasNode({
 
   if (!node) return null;
 
-  const isSelected = !previewMode && selectedId === id;
+  const isSelected = !previewMode && (selectedId === id || selectedIds.includes(id));
+  const isMultiSelected = !previewMode && selectedIds.length > 1 && selectedIds.includes(id);
   const isRoot = id === 'root';
   const horizontal = isHorizontalLayout(parentNode);
 
   const handleClick = (e: React.MouseEvent) => {
     if (previewMode) return;
     e.stopPropagation();
-    onSelect(id);
+    onSelect(id, e.shiftKey || e.ctrlKey || e.metaKey);
   };
 
   const canShowDragHandle = !previewMode && !isRoot;
 
   const editorOutlineClass = previewMode
     ? ''
-    : isSelected
-      ? isRoot
-        ? 'ring-2 ring-inset ring-blue-500 rounded-2xl relative z-10'
-        : 'ring-2 ring-blue-500 ring-offset-1 relative z-10 cursor-grab active:cursor-grabbing'
-      : isRoot
-        ? 'relative transition-shadow duration-150 cursor-pointer'
-        : 'hover:ring-1 hover:ring-blue-300 relative transition-shadow duration-150 cursor-grab active:cursor-grabbing';
+    : isMultiSelected
+      ? 'ring-2 ring-violet-500 ring-offset-1 relative z-10 cursor-grab active:cursor-grabbing'
+      : isSelected
+        ? isRoot
+          ? 'ring-2 ring-inset ring-blue-500 rounded-2xl relative z-10'
+          : 'ring-2 ring-blue-500 ring-offset-1 relative z-10 cursor-grab active:cursor-grabbing'
+        : isRoot
+          ? 'relative transition-shadow duration-150 cursor-pointer'
+          : 'hover:ring-1 hover:ring-blue-300 relative transition-shadow duration-150 cursor-grab active:cursor-grabbing';
 
   const hoverDragHandleClass =
     canShowDragHandle && !isDragging
@@ -267,6 +272,7 @@ export const CanvasNode = memo(function CanvasNode({
   const dndDataProps = {
     'data-node-id': id,
     'data-node-type': node.type,
+    'data-selected': isSelected ? 'true' : undefined,
     'data-guides': !previewMode && showGuides ? 'on' : undefined,
     'data-drop-position':
       !previewMode && isOverShallow && dropPosition ? dropPosition : undefined,
@@ -306,6 +312,7 @@ export const CanvasNode = memo(function CanvasNode({
               id={childId}
               nodes={nodes}
               selectedId={selectedId}
+              selectedIds={selectedIds}
               previewMode={previewMode}
               showGuides={showGuides}
               onSelect={onSelect}

@@ -897,8 +897,12 @@ test('Component History utilities capture added/deleted custom subtrees and rein
   assert.equal(restoredBtn?.parentId, 'hero-1');
 });
 
-test('PDF export helpers sanitize filenames and compute aspect-preserving A4 geometry', async () => {
-  const { buildPdfFileName, computePdfPageGeometry } = await import('./pdfExport.ts');
+test('PDF export helpers sanitize filenames, compute A4 geometry, and produce valid PDF blob bytes', async () => {
+  const {
+    buildPdfFileName,
+    computePdfPageGeometry,
+    createPdfBlobFromImageDataUrl,
+  } = await import('./pdfExport.ts');
 
   assert.equal(buildPdfFileName(''), 'react-ui-studio-canvas.pdf');
   assert.equal(
@@ -921,13 +925,264 @@ test('PDF export helpers sanitize filenames and compute aspect-preserving A4 geo
   assert.equal(tall.pageHeightMm, 297);
   assert.ok(tall.drawHeightMm <= 277.01);
   assert.ok(Math.abs(tall.drawWidthMm / tall.drawHeightMm - 0.5) < 0.01);
+
+  // 1x1 transparent PNG data URI -> valid %PDF- binary blob
+  const tinyPngDataUrl =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const pdfBlob = createPdfBlobFromImageDataUrl(tinyPngDataUrl, 800, 600);
+  assert.ok(pdfBlob.size > 100);
+  const headerText = await pdfBlob.slice(0, 5).text();
+  assert.equal(headerText, '%PDF-');
 });
 
+test('Multi-Selection and Bulk Styling helpers manage selection sets, bulk class updates, shared token reading, and bulk deletion', async () => {
+  const {
+    TEXT_ALIGN_CLASSES,
+    appendBulkCustomClassesToNodes,
+    applyBulkClassUpdaterToNodes,
+    deleteNodesFromTree,
+    getSharedGroupTokenAcrossNodes,
+    getSharedSpacingValueAcrossNodes,
+    getSharedTextColorAcrossNodes,
+    setTailwindSpacingValue,
+    setTailwindTextColor,
+    toggleMultiSelection,
+  } = await import('./editorLogic.ts');
 
+  // Toggle selection behavior
+  let selected = toggleMultiSelection(['root'], 'heading-1', false, INITIAL_NODES);
+  assert.deepEqual(selected, ['heading-1']);
+  selected = toggleMultiSelection(selected, 'text-1', true, INITIAL_NODES);
+  assert.deepEqual(selected, ['heading-1', 'text-1']);
+  // Deselecting one leaves the remaining node
+  selected = toggleMultiSelection(selected, 'heading-1', true, INITIAL_NODES);
+  assert.deepEqual(selected, ['text-1']);
+  // Additive re-add back to two
+  selected = toggleMultiSelection(selected, 'heading-1', true, INITIAL_NODES);
+  assert.deepEqual(selected, ['text-1', 'heading-1']);
+  // Selecting root resets back to ['root']
+  assert.deepEqual(
+    toggleMultiSelection(selected, 'root', true, INITIAL_NODES),
+    ['root']
+  );
 
+  // Bulk text color + bulk spacing update across multiple nodes
+  let bulkUpdated = applyBulkClassUpdaterToNodes(
+    INITIAL_NODES,
+    ['heading-1', 'text-1'],
+    (cls) => setTailwindTextColor(cls, 'text-blue-600')
+  );
+  bulkUpdated = applyBulkClassUpdaterToNodes(
+    bulkUpdated,
+    ['heading-1', 'text-1'],
+    (cls) => setTailwindSpacingValue(cls, 'p', '4')
+  );
 
+  assert.ok(bulkUpdated['heading-1']?.props.className?.includes('text-blue-600'));
+  assert.ok(bulkUpdated['heading-1']?.props.className?.includes('p-4'));
+  assert.ok(bulkUpdated['text-1']?.props.className?.includes('text-blue-600'));
+  assert.ok(bulkUpdated['text-1']?.props.className?.includes('p-4'));
+  // Original node sizes preserved cleanly
+  assert.ok(bulkUpdated['heading-1']?.props.className?.includes('text-3xl'));
+  assert.ok(bulkUpdated['text-1']?.props.className?.includes('text-base'));
 
+  // Shared token readers report common values and '' when divergent
+  assert.equal(
+    getSharedTextColorAcrossNodes(bulkUpdated, ['heading-1', 'text-1']),
+    'text-blue-600'
+  );
+  assert.equal(
+    getSharedSpacingValueAcrossNodes(bulkUpdated, ['heading-1', 'text-1'], 'p'),
+    '4'
+  );
+  assert.equal(
+    getSharedGroupTokenAcrossNodes(bulkUpdated, ['heading-1', 'btn-1'], TEXT_ALIGN_CLASSES),
+    ''
+  );
 
+  // Append arbitrary bulk classes without duplicating existing tokens
+  const withBulkExtra = appendBulkCustomClassesToNodes(
+    bulkUpdated,
+    ['heading-1', 'text-1'],
+    'tracking-wide p-4 shadow-sm'
+  );
+  assert.ok(withBulkExtra['heading-1']?.props.className?.includes('tracking-wide'));
+  assert.ok(withBulkExtra['text-1']?.props.className?.includes('shadow-sm'));
+  assert.equal(
+    withBulkExtra['heading-1']?.props.className
+      ?.split(/\s+/)
+      .filter((t) => t === 'p-4').length,
+    1
+  );
 
+  // Bulk delete removes selected non-root nodes cleanly
+  const afterBulkDelete = deleteNodesFromTree(withBulkExtra, ['heading-1', 'text-1']);
+  assert.equal(afterBulkDelete.nextSelectedId, 'root');
+  assert.equal(afterBulkDelete.nodes['heading-1'], undefined);
+  assert.equal(afterBulkDelete.nodes['text-1'], undefined);
+  assert.ok(afterBulkDelete.nodes['badge-1']);
+  assert.ok(afterBulkDelete.nodes['btn-1']);
+});
+
+test('recordRecentComponentSearch deduplicates by type, ignores blank queries, and caps at 5 newest items', async () => {
+  const { recordRecentComponentSearch } = await import('./editorLogic.ts');
+
+  let list = recordRecentComponentSearch([], {
+    type: 'Grid',
+    label: 'Grid',
+    query: '   ',
+  });
+  assert.equal(list.length, 0);
+
+  const items = [
+    { type: 'Container' as const, label: 'Kontener', query: 'Kontener' },
+    { type: 'Grid' as const, label: 'Grid', query: 'Grid' },
+    { type: 'Heading' as const, label: 'Nagłówek', query: 'Nagłówek' },
+    { type: 'Text' as const, label: 'Tekst', query: 'Tekst' },
+    { type: 'Button' as const, label: 'Przycisk', query: 'Przycisk' },
+    { type: 'Badge' as const, label: 'Odznaka', query: 'Odznaka' },
+  ];
+
+  items.forEach((item, idx) => {
+    list = recordRecentComponentSearch(list, item, 5, 1000 + idx);
+  });
+
+  // Only last 5 remain, newest first
+  assert.equal(list.length, 5);
+  assert.deepEqual(
+    list.map((i) => i.type),
+    ['Badge', 'Button', 'Text', 'Heading', 'Grid']
+  );
+
+  // Searching an already-present type moves it to the top with updated query
+  list = recordRecentComponentSearch(
+    list,
+    { type: 'Grid', label: 'Grid', query: 'siatka' },
+    5,
+    2000
+  );
+  assert.equal(list.length, 5);
+  assert.equal(list[0]?.type, 'Grid');
+  assert.equal(list[0]?.query, 'siatka');
+});
+
+test('generateHtmlExport, generateStaticSvgExport, and buildExportFileName emit valid HTML and SVG exports', async () => {
+  const {
+    buildExportFileName,
+    generateHtmlExport,
+    generateStaticSvgExport,
+  } = await import('./exportFormats.ts');
+  const { DEFAULT_THEME_VARS } = await import('../constants/editorDefaults.ts');
+
+  assert.equal(
+    buildExportFileName('Moja Aplikacja', 'html'),
+    'moja-aplikacja.html'
+  );
+  assert.equal(buildExportFileName('', 'svg'), 'react-ui-studio-design.svg');
+
+  const seo = {
+    title: 'Landing M3',
+    description: 'Nowoczesny szablon UI',
+    canonicalUrl: 'https://example.com/landing',
+  };
+
+  const html = generateHtmlExport(INITIAL_NODES, DEFAULT_THEME_VARS, seo);
+  assert.ok(html.startsWith('<!DOCTYPE html>'));
+  assert.ok(html.includes('<title>Landing M3</title>'));
+  assert.ok(html.includes('<meta name="description" content="Nowoczesny szablon UI" />'));
+  assert.ok(html.includes('<link rel="canonical" href="https://example.com/landing" />'));
+  assert.ok(html.includes('--color-primary: #2563eb;'));
+  assert.ok(html.includes('Zbuduj interfejs React wizualnie'));
+
+  const svg = generateStaticSvgExport(INITIAL_NODES, DEFAULT_THEME_VARS, seo);
+  assert.ok(svg.startsWith('<?xml version="1.0" encoding="UTF-8"?>'));
+  assert.ok(svg.includes('<svg xmlns="http://www.w3.org/2000/svg"'));
+  assert.ok(svg.includes('<title>Landing M3</title>'));
+  assert.ok(svg.includes('<rect '));
+  assert.ok(svg.includes('<text '));
+  assert.ok(svg.includes('Rozpocznij projekt'));
+});
+
+test('THEME_PRESETS includes Material Design 3 and matches presets deterministically', async () => {
+  const { THEME_PRESETS } = await import('../constants/editorDefaults.ts');
+  const { detectMatchingThemePresetId } = await import('./editorLogic.ts');
+
+  const m3 = THEME_PRESETS.find((p) => p.id === 'material-design-3');
+  assert.ok(m3, 'Expected material-design-3 preset');
+  assert.equal(m3.name, 'Material Design 3');
+  assert.equal(
+    m3.variables.find((v) => v.name === '--color-primary')?.value,
+    '#6750A4'
+  );
+  assert.equal(
+    m3.variables.find((v) => v.name === '--color-surface')?.value,
+    '#FEF7FF'
+  );
+
+  assert.equal(
+    detectMatchingThemePresetId(m3.variables, THEME_PRESETS),
+    'material-design-3'
+  );
+  const tweaked = m3.variables.map((v, i) =>
+    i === 0 ? { ...v, value: '#000000' } : v
+  );
+  assert.equal(detectMatchingThemePresetId(tweaked, THEME_PRESETS), null);
+});
+
+test('parseImportedTheme parses CSS :root, flat JSON, ThemeVariable array, and Material Theme Builder schemes', async () => {
+  const {
+    parseImportedTheme,
+    serializeThemeVariablesToJson,
+  } = await import('./editorLogic.ts');
+
+  // 1. CSS :root block
+  const cssRes = parseImportedTheme(
+    `:root { --color-primary: #6750A4; --color-surface: #FEF7FF; --font-size-title: 2rem; }`,
+    () => 'var_id'
+  );
+  assert.equal(cssRes.ok, true);
+  if (cssRes.ok) {
+    assert.equal(cssRes.variables.length, 3);
+    assert.equal(cssRes.variables[0]?.category, 'color');
+    assert.equal(cssRes.variables[2]?.category, 'fontSize');
+  }
+
+  // 2. Round-trip ThemeVariable[] JSON
+  if (cssRes.ok) {
+    const serialized = serializeThemeVariablesToJson(cssRes.variables);
+    const jsonArrRes = parseImportedTheme(serialized, () => 'arr_id');
+    assert.equal(jsonArrRes.ok, true);
+    if (jsonArrRes.ok) {
+      assert.equal(jsonArrRes.variables.length, 3);
+      assert.equal(jsonArrRes.variables[0]?.name, '--color-primary');
+    }
+  }
+
+  // 3. Material Theme Builder JSON `{ schemes: { light: { primary, onPrimary, surface } } }`
+  const m3Json = JSON.stringify({
+    schemes: {
+      light: {
+        primary: '#6750A4',
+        onPrimary: '#FFFFFF',
+        surface: '#FEF7FF',
+      },
+    },
+  });
+  const m3Res = parseImportedTheme(m3Json, () => 'm3_id');
+  assert.equal(m3Res.ok, true);
+  if (m3Res.ok) {
+    assert.ok(
+      m3Res.variables.some(
+        (v) => v.name === '--color-on-primary' && v.value === '#FFFFFF'
+      )
+    );
+  }
+
+  // 4. Invalid inputs return descriptive errors
+  const badJson = parseImportedTheme('{ invalid json');
+  assert.equal(badJson.ok, false);
+  const empty = parseImportedTheme('   ');
+  assert.equal(empty.ok, false);
+});
 
 

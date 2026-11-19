@@ -6,14 +6,16 @@ interface LayerTreeItemProps {
   id: string;
   nodes: NodesMap;
   selectedId: string;
+  selectedIds: string[];
   depth?: number;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, additive?: boolean) => void;
 }
 
 export const LayerTreeItem = memo(function LayerTreeItem({
   id,
   nodes,
   selectedId,
+  selectedIds,
   depth = 0,
   onSelect,
 }: LayerTreeItemProps) {
@@ -22,7 +24,7 @@ export const LayerTreeItem = memo(function LayerTreeItem({
   if (!node) return null;
 
   const hasChildren = Boolean(node.children && node.children.length > 0);
-  const isSelected = selectedId === id;
+  const isSelected = selectedId === id || selectedIds.includes(id);
   const label = node.name.trim() || node.type;
   const metaParts: string[] = [node.type];
   if (node.variant) {
@@ -63,7 +65,7 @@ export const LayerTreeItem = memo(function LayerTreeItem({
 
         <button
           type="button"
-          onClick={() => onSelect(id)}
+          onClick={(e) => onSelect(id, e.shiftKey || e.ctrlKey || e.metaKey)}
           className="flex-1 min-w-0 flex items-center justify-between gap-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
         >
           <span className="truncate">{label}</span>
@@ -81,6 +83,7 @@ export const LayerTreeItem = memo(function LayerTreeItem({
               id={childId}
               nodes={nodes}
               selectedId={selectedId}
+              selectedIds={selectedIds}
               depth={depth + 1}
               onSelect={onSelect}
             />

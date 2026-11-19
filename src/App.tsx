@@ -12,6 +12,7 @@ import {
   DEFAULT_SEO_METADATA,
   DEFAULT_THEME_VARS,
   INITIAL_NODES,
+  RECENT_SEARCHES_STORAGE_KEY,
   SEO_STORAGE_KEY,
   STORAGE_KEY,
   THEME_STORAGE_KEY,
@@ -20,10 +21,13 @@ import {
 import type {
   ComponentHistoryEntry,
   ComponentHistoryEventType,
+  EditorNode,
+  ExportFormat,
   HistoryState,
   LeftTab,
   NodesMap,
   NodeType,
+  RecentComponentSearch,
   SeoMetadata,
   ThemeVarCategory,
   ThemeVariable,
@@ -34,10 +38,13 @@ import {
   addCardPresetToTree,
   addIconNodeToTree,
   addNodeToTree,
+  appendBulkCustomClassesToNodes,
+  applyBulkClassUpdaterToNodes,
   applyNodeVariantInTree,
   buildThemeCssRules,
   createComponentHistoryEntry,
   deleteNodeFromTree,
+  deleteNodesFromTree,
   duplicateNodeInTree,
   generateId,
   generateReactJSX,
@@ -47,13 +54,23 @@ import {
   insertPageTemplateIntoTree,
   moveNodeRelativeToTarget,
   prependComponentHistory,
+  recordRecentComponentSearch,
   refreshAddedComponentHistoryEntry,
   reinsertComponentFromHistory,
   serializeNodesToJson,
   stepZoom,
+  toggleMultiSelection,
   updateNodeInTree,
   type DropPosition,
 } from './utils/editorLogic';
+import {
+  buildExportFileName,
+  downloadTextFile,
+  exportCanvasElementAsSvg,
+  generateHtmlExport,
+  generateStaticSvgExport,
+  type CodePreviewFormat,
+} from './utils/exportFormats';
 import { exportCanvasElementAsPdf } from './utils/pdfExport';
 
 function loadInitialHistory(): HistoryState {
@@ -128,6 +145,29 @@ function loadInitialComponentHistory(): ComponentHistoryEntry[] {
   return [];
 }
 
+function loadInitialRecentSearches(): RecentComponentSearch[] {
+  try {
+    const saved = localStorage.getItem(RECENT_SEARCHES_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved) as RecentComponentSearch[];
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter(
+            (item) =>
+              item &&
+              typeof item.type === 'string' &&
+              typeof item.label === 'string' &&
+              typeof item.query === 'string'
+          )
+          .slice(0, 5);
+      }
+    }
+  } catch {
+    // Ignore localStorage parse/access errors
+  }
+  return [];
+}
+
 export default function App() {
   const [history, setHistory] = useState<HistoryState>(loadInitialHistory);
   const nodes = history.present;
@@ -138,14 +178,22 @@ export default function App() {
   const [componentHistory, setComponentHistory] = useState<
     ComponentHistoryEntry[]
   >(loadInitialComponentHistory);
+  const [recentSearches, setRecentSearches] = useState<RecentComponentSearch[]>(
+    loadInitialRecentSearches
+  );
 
-  const [selectedId, setSelectedId] = useState<string>('root');
+  const [selectedIds, setSelectedIds] = useState<string[]>(['root']);
+  const [multiSelectMode, setMultiSelectMode] = useState<boolean>(false);
+  const selectedId = selectedIds[selectedIds.length - 1] || 'root';
+
   const [leftTab, setLeftTab] = useState<LeftTab>('components');
   const [viewport, setViewport] = useState<ViewportMode>('desktop');
   const [zoom, setZoom] = useState<number>(DEFAULT_ZOOM);
   const [showGuides, setShowGuides] = useState<boolean>(false);
   const [previewMode, setPreviewMode] = useState<boolean>(false);
   const [showCode, setShowCode] = useState<boolean>(false);
+  const [codeExportFormat, setCodeExportFormat] =
+    useState<CodePreviewFormat>('react');
   const [copied, setCopied] = useState<boolean>(false);
   const [copiedJson, setCopiedJson] = useState<boolean>(false);
   const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
@@ -186,6 +234,17 @@ export default function App() {
       // Ignore storage quota errors
     }
   }, [componentHistory]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        RECENT_SEARCHES_STORAGE_KEY,
+        JSON.stringify(recentSearches)
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [recentSearches]);
 
   const commitNodes = useCallback(
     (updater: NodesMap | ((curr: NodesMap) => NodesMap)) => {
@@ -242,12 +301,51 @@ export default function App() {
     []
   );
 
+  const handleSelectNode = useCallback(
+    (id: string, additive = false) => {
+      setSelectedIds((prev) =>
+        toggleMultiSelection(prev, id, additive || multiSelectMode, nodes)
+      );
+    },
+    [multiSelectMode, nodes]
+  );
+
+  const handleToggleMultiSelect = useCallback(() => {
+    setMultiSelectMode((prev) => {
+      const next = !prev;
+      if (!next) {
+        setSelectedIds((curr) =>
+          curr.length > 1 ? [curr[curr.length - 1] || 'root'] : curr
+        );
+      }
+      return next;
+    });
+  }, []);
+
+  const handleClearMultiSelect = useCallback(() => {
+    setMultiSelectMode(false);
+    setSelectedIds((curr) =>
+      curr.length > 0 ? [curr[curr.length - 1] || 'root'] : ['root']
+    );
+  }, []);
+
+  const handleRecordRecentSearch = useCallback(
+    (entry: Omit<RecentComponentSearch, 'timestamp'>) => {
+      setRecentSearches((prev) => recordRecentComponentSearch(prev, entry));
+    },
+    []
+  );
+
+  const handleClearRecentSearches = useCallback(() => {
+    setRecentSearches([]);
+  }, []);
+
   const handleAddNode = useCallback(
     (type: NodeType) => {
       const result = addNodeToTree(nodes, selectedId, type);
       if (!result.createdId) return;
       commitNodes(result.nodes);
-      setSelectedId(result.createdId);
+      setSelectedIds([result.createdId]);
       recordComponentHistory(result.nodes, result.createdId, 'added');
     },
     [nodes, selectedId, commitNodes, recordComponentHistory]
@@ -258,7 +356,7 @@ export default function App() {
       const result = addIconNodeToTree(nodes, selectedId, iconName);
       if (!result.createdId) return;
       commitNodes(result.nodes);
-      setSelectedId(result.createdId);
+      setSelectedIds([result.createdId]);
       recordComponentHistory(result.nodes, result.createdId, 'added');
     },
     [nodes, selectedId, commitNodes, recordComponentHistory]
@@ -268,7 +366,7 @@ export default function App() {
     const result = addCardPresetToTree(nodes, selectedId);
     if (!result.createdId) return;
     commitNodes(result.nodes);
-    setSelectedId(result.createdId);
+    setSelectedIds([result.createdId]);
     recordComponentHistory(result.nodes, result.createdId, 'added');
   }, [nodes, selectedId, commitNodes, recordComponentHistory]);
 
@@ -277,7 +375,7 @@ export default function App() {
       const result = insertPageTemplateIntoTree(nodes, selectedId, blueprint);
       if (!result.createdId) return;
       commitNodes(result.nodes);
-      setSelectedId(result.createdId);
+      setSelectedIds([result.createdId]);
       recordComponentHistory(result.nodes, result.createdId, 'added');
     },
     [nodes, selectedId, commitNodes, recordComponentHistory]
@@ -288,7 +386,7 @@ export default function App() {
       const result = reinsertComponentFromHistory(nodes, selectedId, entry);
       if (!result.createdId) return;
       commitNodes(result.nodes);
-      setSelectedId(result.createdId);
+      setSelectedIds([result.createdId]);
       recordComponentHistory(result.nodes, result.createdId, 'added');
     },
     [nodes, selectedId, commitNodes, recordComponentHistory]
@@ -338,6 +436,10 @@ export default function App() {
     setThemeVars((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const handleReplaceThemeVars = useCallback((nextVars: ThemeVariable[]) => {
+    setThemeVars(nextVars);
+  }, []);
+
   const handleChangeSeo = useCallback(
     (field: keyof SeoMetadata, value: string) => {
       setSeoMetadata((prev) => ({ ...prev, [field]: value }));
@@ -356,6 +458,50 @@ export default function App() {
     [nodes, selectedId, commitNodes]
   );
 
+  const handleBulkUpdateClassName = useCallback(
+    (updater: (currClass: string, node: EditorNode) => string) => {
+      const nextNodes = applyBulkClassUpdaterToNodes(nodes, selectedIds, updater);
+      if (nextNodes === nodes) return;
+      commitNodes(nextNodes);
+      setComponentHistory((curr) => {
+        let updatedHistory = curr;
+        for (const id of selectedIds) {
+          updatedHistory = refreshAddedComponentHistoryEntry(
+            updatedHistory,
+            nextNodes,
+            id
+          );
+        }
+        return updatedHistory;
+      });
+    },
+    [nodes, selectedIds, commitNodes]
+  );
+
+  const handleAppendBulkClasses = useCallback(
+    (extraClasses: string) => {
+      const nextNodes = appendBulkCustomClassesToNodes(
+        nodes,
+        selectedIds,
+        extraClasses
+      );
+      if (nextNodes === nodes) return;
+      commitNodes(nextNodes);
+      setComponentHistory((curr) => {
+        let updatedHistory = curr;
+        for (const id of selectedIds) {
+          updatedHistory = refreshAddedComponentHistoryEntry(
+            updatedHistory,
+            nextNodes,
+            id
+          );
+        }
+        return updatedHistory;
+      });
+    },
+    [nodes, selectedIds, commitNodes]
+  );
+
   const handleChangeSelectedVariant = useCallback(
     (variantId: string) => {
       const nextNodes = applyNodeVariantInTree(nodes, selectedId, variantId);
@@ -371,7 +517,7 @@ export default function App() {
     const result = duplicateNodeInTree(nodes, selectedId);
     if (!result.createdId) return;
     commitNodes(result.nodes);
-    setSelectedId(result.createdId);
+    setSelectedIds([result.createdId]);
     recordComponentHistory(result.nodes, result.createdId, 'added');
   }, [nodes, selectedId, commitNodes, recordComponentHistory]);
 
@@ -380,7 +526,7 @@ export default function App() {
       commitNodes((prev) =>
         moveNodeRelativeToTarget(prev, dragId, targetId, position)
       );
-      setSelectedId(dragId);
+      setSelectedIds([dragId]);
     },
     [commitNodes]
   );
@@ -390,7 +536,7 @@ export default function App() {
       const result = insertIconNodeAtTarget(nodes, iconName, targetId, position);
       if (!result.createdId) return;
       commitNodes(result.nodes);
-      setSelectedId(result.createdId);
+      setSelectedIds([result.createdId]);
       recordComponentHistory(result.nodes, result.createdId, 'added');
     },
     [nodes, commitNodes, recordComponentHistory]
@@ -402,17 +548,44 @@ export default function App() {
     }
     const result = deleteNodeFromTree(nodes, selectedId);
     commitNodes(result.nodes);
-    setSelectedId(result.nextSelectedId);
+    setSelectedIds([result.nextSelectedId]);
   }, [nodes, selectedId, commitNodes, recordComponentHistory]);
+
+  const handleBulkDeleteNodes = useCallback(() => {
+    const deletableIds = selectedIds.filter(
+      (id) => id !== 'root' && Boolean(nodes[id])
+    );
+    if (deletableIds.length === 0) return;
+
+    const deletedEntries = deletableIds
+      .map((id) => createComponentHistoryEntry(nodes, id, 'deleted'))
+      .filter((entry): entry is ComponentHistoryEntry => Boolean(entry));
+
+    if (deletedEntries.length > 0) {
+      setComponentHistory((curr) => {
+        let next = curr;
+        for (const entry of deletedEntries) {
+          next = prependComponentHistory(next, entry);
+        }
+        return next;
+      });
+    }
+
+    const result = deleteNodesFromTree(nodes, deletableIds);
+    commitNodes(result.nodes);
+    setSelectedIds([result.nextSelectedId]);
+    setMultiSelectMode(false);
+  }, [nodes, selectedIds, commitNodes]);
 
   const handleReplaceNodes = useCallback(
     (nextNodes: NodesMap) => {
       commitNodes(nextNodes);
-      if (!nextNodes[selectedId]) {
-        setSelectedId('root');
-      }
+      setSelectedIds((prev) => {
+        const remaining = prev.filter((id) => Boolean(nextNodes[id]));
+        return remaining.length > 0 ? remaining : ['root'];
+      });
     },
-    [commitNodes, selectedId]
+    [commitNodes]
   );
 
   useEffect(() => {
@@ -448,6 +621,11 @@ export default function App() {
       }
 
       if (e.key === 'Delete') {
+        if (selectedIds.length > 1) {
+          e.preventDefault();
+          handleBulkDeleteNodes();
+          return;
+        }
         if (selectedId !== 'root') {
           e.preventDefault();
           handleDeleteSelectedNode();
@@ -456,10 +634,15 @@ export default function App() {
       }
 
       if (e.key === 'Escape') {
+        if (selectedIds.length > 1) {
+          e.preventDefault();
+          handleClearMultiSelect();
+          return;
+        }
         const parentId = getParentNodeId(nodes, selectedId);
         if (parentId) {
           e.preventDefault();
-          setSelectedId(parentId);
+          setSelectedIds([parentId]);
           if (
             document.activeElement instanceof HTMLElement &&
             document.activeElement.dataset.nodeId
@@ -476,8 +659,11 @@ export default function App() {
     handleRedo,
     handleDuplicateSelectedNode,
     handleDeleteSelectedNode,
+    handleBulkDeleteNodes,
+    handleClearMultiSelect,
     nodes,
     selectedId,
+    selectedIds,
     previewMode,
     showCode,
   ]);
@@ -489,7 +675,8 @@ export default function App() {
       return;
     }
     commitNodes(INITIAL_NODES);
-    setSelectedId('root');
+    setSelectedIds(['root']);
+    setMultiSelectMode(false);
     setConfirmReset(false);
   }, [confirmReset, commitNodes]);
 
@@ -497,15 +684,27 @@ export default function App() {
     () => generateReactJSX(nodes, seoMetadata),
     [nodes, seoMetadata]
   );
+  const generatedHtml = useMemo(
+    () => generateHtmlExport(nodes, themeVars, seoMetadata),
+    [nodes, themeVars, seoMetadata]
+  );
+  const generatedSvg = useMemo(
+    () => generateStaticSvgExport(nodes, themeVars, seoMetadata),
+    [nodes, themeVars, seoMetadata]
+  );
   const themeCssRules = useMemo(() => buildThemeCssRules(themeVars), [themeVars]);
 
-  const handleCopyCode = useCallback(() => {
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(generatedCode).catch(() => {});
-    }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
-  }, [generatedCode]);
+  const handleCopyCode = useCallback(
+    (content?: string) => {
+      const payload = typeof content === 'string' ? content : generatedCode;
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(payload).catch(() => {});
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    },
+    [generatedCode]
+  );
 
   const handleCopyTreeJson = useCallback(() => {
     const jsonPayload = serializeNodesToJson(nodes);
@@ -526,6 +725,40 @@ export default function App() {
       setIsExportingPdf(false);
     }
   }, [isExportingPdf, seoMetadata.title]);
+
+  const handleExportFormat = useCallback(
+    (format: ExportFormat) => {
+      if (format === 'html') {
+        downloadTextFile(
+          generatedHtml,
+          buildExportFileName(seoMetadata.title, 'html'),
+          'text/html;charset=utf-8'
+        );
+        return;
+      }
+      if (format === 'react') {
+        downloadTextFile(
+          generatedCode,
+          buildExportFileName(seoMetadata.title, 'jsx'),
+          'text/javascript;charset=utf-8'
+        );
+        return;
+      }
+      if (format === 'svg') {
+        exportCanvasElementAsSvg(
+          canvasViewportRef.current,
+          nodes,
+          themeVars,
+          seoMetadata
+        );
+        return;
+      }
+      if (format === 'pdf') {
+        void handleExportPdf();
+      }
+    },
+    [generatedHtml, generatedCode, seoMetadata, nodes, themeVars, handleExportPdf]
+  );
 
   const selectedNode = nodes[selectedId];
 
@@ -551,9 +784,13 @@ export default function App() {
           onReinsertFromHistory={handleReinsertFromHistory}
           onRemoveHistoryEntry={handleRemoveHistoryEntry}
           onClearComponentHistory={handleClearComponentHistory}
+          recentSearches={recentSearches}
+          onRecordRecentSearch={handleRecordRecentSearch}
+          onClearRecentSearches={handleClearRecentSearches}
           nodes={nodes}
           selectedId={selectedId}
-          onSelectNode={setSelectedId}
+          selectedIds={selectedIds}
+          onSelectNode={handleSelectNode}
         />
 
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -572,10 +809,14 @@ export default function App() {
             onResetZoom={() => setZoom(DEFAULT_ZOOM)}
             showGuides={showGuides}
             onToggleGuides={() => setShowGuides((g) => !g)}
+            multiSelectMode={multiSelectMode}
+            multiSelectCount={selectedIds.length}
+            onToggleMultiSelect={handleToggleMultiSelect}
             copiedJson={copiedJson}
             onCopyTreeJson={handleCopyTreeJson}
             isExportingPdf={isExportingPdf}
             onExportPdf={handleExportPdf}
+            onExportFormat={handleExportFormat}
             previewMode={previewMode}
             onTogglePreview={() => {
               setPreviewMode((p) => !p);
@@ -589,7 +830,7 @@ export default function App() {
             <CanvasBreadcrumb
               nodes={nodes}
               selectedId={selectedId}
-              onSelectNode={setSelectedId}
+              onSelectNode={(id) => handleSelectNode(id, false)}
             />
           )}
 
@@ -597,15 +838,21 @@ export default function App() {
             className="flex-1 overflow-auto p-6 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:18px_18px]"
             onClick={() => {
               if (!previewMode && !showCode) {
-                setSelectedId('root');
+                setSelectedIds(['root']);
               }
             }}
           >
             {showCode ? (
               <CodeExportView
-                generatedCode={generatedCode}
+                reactCode={generatedCode}
+                htmlCode={generatedHtml}
+                svgCode={generatedSvg}
+                activeFormat={codeExportFormat}
+                onChangeFormat={setCodeExportFormat}
                 copied={copied}
                 onCopy={handleCopyCode}
+                onDownloadFormat={handleExportFormat}
+                isExportingPdf={isExportingPdf}
               />
             ) : (
               <div
@@ -623,9 +870,10 @@ export default function App() {
                   id="root"
                   nodes={nodes}
                   selectedId={selectedId}
+                  selectedIds={selectedIds}
                   previewMode={previewMode}
                   showGuides={showGuides}
-                  onSelect={setSelectedId}
+                  onSelect={handleSelectNode}
                   onMoveNode={handleMoveNode}
                   onDropNewIcon={handleDropNewIcon}
                 />
@@ -636,9 +884,14 @@ export default function App() {
 
         <InspectorPanel
           selectedId={selectedId}
+          selectedIds={selectedIds}
           selectedNode={selectedNode}
           nodes={nodes}
           onUpdateNode={handleUpdateSelectedNode}
+          onBulkUpdateClassName={handleBulkUpdateClassName}
+          onAppendBulkClasses={handleAppendBulkClasses}
+          onClearMultiSelect={handleClearMultiSelect}
+          onBulkDeleteNodes={handleBulkDeleteNodes}
           onChangeVariant={handleChangeSelectedVariant}
           onReplaceNodes={handleReplaceNodes}
           onDuplicateNode={handleDuplicateSelectedNode}
@@ -647,6 +900,7 @@ export default function App() {
           onAddThemeVar={handleAddThemeVar}
           onUpdateThemeVar={handleUpdateThemeVar}
           onDeleteThemeVar={handleDeleteThemeVar}
+          onReplaceThemeVars={handleReplaceThemeVars}
           seoMetadata={seoMetadata}
           onChangeSeo={handleChangeSeo}
         />

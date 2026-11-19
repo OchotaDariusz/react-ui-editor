@@ -4,6 +4,7 @@ import type {
   NodesMap,
   NodeType,
   SeoMetadata,
+  ThemePreset,
   ThemeVariable,
 } from '../types/editor';
 
@@ -11,6 +12,7 @@ export const STORAGE_KEY = 'react_ui_editor_state_v2';
 export const THEME_STORAGE_KEY = 'react_ui_editor_theme_v1';
 export const SEO_STORAGE_KEY = 'react_ui_editor_seo_v1';
 export const COMPONENT_HISTORY_STORAGE_KEY = 'react_ui_editor_comp_history_v1';
+export const RECENT_SEARCHES_STORAGE_KEY = 'react_ui_editor_recent_searches_v1';
 
 export const DEFAULT_SEO_METADATA: SeoMetadata = {
   title: '',
@@ -53,6 +55,281 @@ export const DEFAULT_THEME_VARS: ThemeVariable[] = [
     label: 'Body Size',
     value: '1rem',
     category: 'fontSize',
+  },
+];
+
+export const THEME_PRESETS: ThemePreset[] = [
+  {
+    id: 'studio-default',
+    name: 'Studio Default',
+    description: 'Klasyczny błękit i neutralna biel',
+    variables: DEFAULT_THEME_VARS,
+  },
+  {
+    id: 'material-design-3',
+    name: 'Material Design 3',
+    description: 'Baseline M3 Tonal Violet & Surface',
+    variables: [
+      {
+        id: 'm3-primary',
+        name: '--color-primary',
+        label: 'M3 Primary',
+        value: '#6750A4',
+        category: 'color',
+      },
+      {
+        id: 'm3-on-primary',
+        name: '--color-on-primary',
+        label: 'M3 On Primary',
+        value: '#FFFFFF',
+        category: 'color',
+      },
+      {
+        id: 'm3-primary-container',
+        name: '--color-primary-container',
+        label: 'M3 Container',
+        value: '#EADDFF',
+        category: 'color',
+      },
+      {
+        id: 'm3-secondary',
+        name: '--color-secondary',
+        label: 'M3 Secondary',
+        value: '#625B71',
+        category: 'color',
+      },
+      {
+        id: 'm3-surface',
+        name: '--color-surface',
+        label: 'M3 Surface',
+        value: '#FEF7FF',
+        category: 'color',
+      },
+      {
+        id: 'm3-on-surface',
+        name: '--color-on-surface',
+        label: 'M3 On Surface',
+        value: '#1D1B20',
+        category: 'color',
+      },
+      {
+        id: 'm3-outline',
+        name: '--color-outline',
+        label: 'M3 Outline',
+        value: '#79747E',
+        category: 'color',
+      },
+      {
+        id: 'm3-font-title',
+        name: '--font-size-title',
+        label: 'Headline Large',
+        value: '2rem',
+        category: 'fontSize',
+      },
+      {
+        id: 'm3-font-body',
+        name: '--font-size-body',
+        label: 'Body Large',
+        value: '1rem',
+        category: 'fontSize',
+      },
+    ],
+  },
+  {
+    id: 'minimal-slate',
+    name: 'Minimal Slate',
+    description: 'Monochromatyczny kontrast high-craft',
+    variables: [
+      {
+        id: 'ms-primary',
+        name: '--color-primary',
+        label: 'Primary',
+        value: '#18181b',
+        category: 'color',
+      },
+      {
+        id: 'ms-secondary',
+        name: '--color-secondary',
+        label: 'Secondary',
+        value: '#52525b',
+        category: 'color',
+      },
+      {
+        id: 'ms-surface',
+        name: '--color-surface',
+        label: 'Surface',
+        value: '#ffffff',
+        category: 'color',
+      },
+      {
+        id: 'ms-accent',
+        name: '--color-accent',
+        label: 'Muted Accent',
+        value: '#f4f4f5',
+        category: 'color',
+      },
+      {
+        id: 'ms-font-title',
+        name: '--font-size-title',
+        label: 'Title Size',
+        value: '2.25rem',
+        category: 'fontSize',
+      },
+      {
+        id: 'ms-font-body',
+        name: '--font-size-body',
+        label: 'Body Size',
+        value: '0.95rem',
+        category: 'fontSize',
+      },
+    ],
+  },
+  {
+    id: 'emerald-botanical',
+    name: 'Emerald SaaS',
+    description: 'Świeża zieleń i głębia lasu',
+    variables: [
+      {
+        id: 'em-primary',
+        name: '--color-primary',
+        label: 'Primary',
+        value: '#059669',
+        category: 'color',
+      },
+      {
+        id: 'em-secondary',
+        name: '--color-secondary',
+        label: 'Secondary',
+        value: '#064e3b',
+        category: 'color',
+      },
+      {
+        id: 'em-surface',
+        name: '--color-surface',
+        label: 'Surface',
+        value: '#ecfdf5',
+        category: 'color',
+      },
+      {
+        id: 'em-accent',
+        name: '--color-accent',
+        label: 'Accent',
+        value: '#10b981',
+        category: 'color',
+      },
+      {
+        id: 'em-font-title',
+        name: '--font-size-title',
+        label: 'Title Size',
+        value: '2.5rem',
+        category: 'fontSize',
+      },
+      {
+        id: 'em-font-body',
+        name: '--font-size-body',
+        label: 'Body Size',
+        value: '1rem',
+        category: 'fontSize',
+      },
+    ],
+  },
+  {
+    id: 'warm-sunset',
+    name: 'Warm Sunset',
+    description: 'Energetyczny koral i ciepły bursztyn',
+    variables: [
+      {
+        id: 'ws-primary',
+        name: '--color-primary',
+        label: 'Primary',
+        value: '#e11d48',
+        category: 'color',
+      },
+      {
+        id: 'ws-secondary',
+        name: '--color-secondary',
+        label: 'Secondary',
+        value: '#881337',
+        category: 'color',
+      },
+      {
+        id: 'ws-surface',
+        name: '--color-surface',
+        label: 'Surface',
+        value: '#fff1f2',
+        category: 'color',
+      },
+      {
+        id: 'ws-accent',
+        name: '--color-accent',
+        label: 'Accent',
+        value: '#f97316',
+        category: 'color',
+      },
+      {
+        id: 'ws-font-title',
+        name: '--font-size-title',
+        label: 'Title Size',
+        value: '2.25rem',
+        category: 'fontSize',
+      },
+      {
+        id: 'ws-font-body',
+        name: '--font-size-body',
+        label: 'Body Size',
+        value: '1rem',
+        category: 'fontSize',
+      },
+    ],
+  },
+  {
+    id: 'midnight-dark',
+    name: 'Midnight Neon',
+    description: 'Ciemne tło i cyjanowy akcent',
+    variables: [
+      {
+        id: 'md-primary',
+        name: '--color-primary',
+        label: 'Primary',
+        value: '#38bdf8',
+        category: 'color',
+      },
+      {
+        id: 'md-secondary',
+        name: '--color-secondary',
+        label: 'Secondary',
+        value: '#a855f7',
+        category: 'color',
+      },
+      {
+        id: 'md-surface',
+        name: '--color-surface',
+        label: 'Surface',
+        value: '#0f172a',
+        category: 'color',
+      },
+      {
+        id: 'md-on-surface',
+        name: '--color-on-surface',
+        label: 'On Surface',
+        value: '#f8fafc',
+        category: 'color',
+      },
+      {
+        id: 'md-font-title',
+        name: '--font-size-title',
+        label: 'Title Size',
+        value: '2.5rem',
+        category: 'fontSize',
+      },
+      {
+        id: 'md-font-body',
+        name: '--font-size-body',
+        label: 'Body Size',
+        value: '1rem',
+        category: 'fontSize',
+      },
+    ],
   },
 ];
 

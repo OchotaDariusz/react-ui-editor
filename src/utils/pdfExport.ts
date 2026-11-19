@@ -128,6 +128,7 @@ export const exportCanvasElementAsPdf = async (
   try {
     imageDataUrl = await toPng(element, {
       cacheBust: true,
+      skipFonts: true,
       backgroundColor: '#ffffff',
       pixelRatio: 2,
       style: {

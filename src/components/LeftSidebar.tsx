@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDrag } from 'react-dnd';
 import {
+  Clock,
   CreditCard,
   Heading,
   History,
@@ -33,6 +34,7 @@ import {
   type LeftTab,
   type NodesMap,
   type NodeType,
+  type RecentComponentSearch,
 } from '../types/editor';
 import {
   filterComponentHistory,
@@ -51,9 +53,13 @@ interface LeftSidebarProps {
   onReinsertFromHistory: (entry: ComponentHistoryEntry) => void;
   onRemoveHistoryEntry: (historyId: string) => void;
   onClearComponentHistory: () => void;
+  recentSearches: RecentComponentSearch[];
+  onRecordRecentSearch: (entry: Omit<RecentComponentSearch, 'timestamp'>) => void;
+  onClearRecentSearches: () => void;
   nodes: NodesMap;
   selectedId: string;
-  onSelectNode: (id: string) => void;
+  selectedIds: string[];
+  onSelectNode: (id: string, additive?: boolean) => void;
 }
 
 const BASIC_COMPONENTS: Array<{
@@ -140,8 +146,12 @@ export function LeftSidebar({
   onReinsertFromHistory,
   onRemoveHistoryEntry,
   onClearComponentHistory,
+  recentSearches,
+  onRecordRecentSearch,
+  onClearRecentSearches,
   nodes,
   selectedId,
+  selectedIds,
   onSelectNode,
 }: LeftSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -172,6 +182,37 @@ export function LeftSidebar({
 
   const hasAnyResults =
     filteredBasicComponents.length > 0 || filteredPresets.length > 0;
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 2) return;
+    const topBasic = filteredBasicComponents[0];
+    const topPreset = filteredPresets[0];
+    if (!topBasic && !topPreset) return;
+
+    const timer = window.setTimeout(() => {
+      if (topBasic) {
+        onRecordRecentSearch({
+          type: topBasic.type,
+          label: topBasic.label,
+          query: trimmed,
+        });
+      } else if (topPreset) {
+        onRecordRecentSearch({
+          type: topPreset.type,
+          label: topPreset.label,
+          query: trimmed,
+        });
+      }
+    }, 450);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    searchQuery,
+    filteredBasicComponents,
+    filteredPresets,
+    onRecordRecentSearch,
+  ]);
 
   return (
     <aside className="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 z-20">
@@ -278,6 +319,26 @@ export function LeftSidebar({
               onKeyDown={(e) => {
                 if (e.key === 'Escape' && searchQuery) {
                   setSearchQuery('');
+                  return;
+                }
+                if (e.key === 'Enter') {
+                  const trimmed = searchQuery.trim();
+                  if (!trimmed) return;
+                  const topBasic = filteredBasicComponents[0];
+                  const topPreset = filteredPresets[0];
+                  if (topBasic) {
+                    onRecordRecentSearch({
+                      type: topBasic.type,
+                      label: topBasic.label,
+                      query: trimmed,
+                    });
+                  } else if (topPreset) {
+                    onRecordRecentSearch({
+                      type: topPreset.type,
+                      label: topPreset.label,
+                      query: trimmed,
+                    });
+                  }
                 }
               }}
               className="w-full pl-8 pr-8 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-colors"
@@ -293,6 +354,57 @@ export function LeftSidebar({
               </button>
             )}
           </div>
+
+          {recentSearches.length > 0 && (
+            <section
+              aria-label="Recent Searches"
+              className="space-y-2 p-2.5 bg-slate-50/90 border border-slate-200/80 rounded-xl"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="flex items-center gap-1 text-[11px] font-bold text-slate-500 tracking-wide">
+                  <Clock className="w-3 h-3" aria-hidden="true" />
+                  Recent Searches
+                </h2>
+                <button
+                  type="button"
+                  aria-label="Wyczyść ostatnie wyszukiwania"
+                  onClick={onClearRecentSearches}
+                  className="text-[10px] font-medium text-slate-400 hover:text-red-600 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1"
+                >
+                  Wyczyść
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {recentSearches.map((item) => {
+                  const matchedBasic = BASIC_COMPONENTS.find(
+                    (b) => b.type === item.type
+                  );
+                  const ItemIcon = matchedBasic ? matchedBasic.icon : CreditCard;
+                  return (
+                    <button
+                      key={`${item.type}-${item.query}`}
+                      type="button"
+                      title={`Wstaw ${item.label} (szukano: "${item.query}")`}
+                      aria-label={`Wstaw ostatnio szukany komponent ${item.label}`}
+                      onClick={() => {
+                        if (item.type === 'CardPreset') {
+                          onAddCardPreset();
+                        } else {
+                          onAddNode(item.type);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-2 py-1.5 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-lg text-left transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 min-w-0"
+                    >
+                      <ItemIcon className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-600 shrink-0" />
+                      <span className="text-[11px] font-medium text-slate-700 group-hover:text-blue-700 truncate">
+                        {item.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
 
           {!hasAnyResults ? (
             <div className="py-8 px-3 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/50 space-y-2.5">
@@ -319,7 +431,17 @@ export function LeftSidebar({
                       <button
                         key={type}
                         type="button"
-                        onClick={() => onAddNode(type)}
+                        onClick={() => {
+                          const trimmed = searchQuery.trim();
+                          if (trimmed) {
+                            onRecordRecentSearch({
+                              type,
+                              label,
+                              query: trimmed,
+                            });
+                          }
+                          onAddNode(type);
+                        }}
                         className="flex flex-col items-center justify-center p-3 bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-xl transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                       >
                         <Icon className="w-5 h-5 mb-1.5 text-slate-600 group-hover:text-blue-600" />
@@ -339,7 +461,17 @@ export function LeftSidebar({
                   </h2>
                   <button
                     type="button"
-                    onClick={onAddCardPreset}
+                    onClick={() => {
+                      const trimmed = searchQuery.trim();
+                      if (trimmed) {
+                        onRecordRecentSearch({
+                          type: 'CardPreset',
+                          label: 'Karta Produktu',
+                          query: trimmed,
+                        });
+                      }
+                      onAddCardPreset();
+                    }}
                     className="w-full flex items-center gap-3 p-3 bg-gradient-to-r from-slate-50 to-blue-50/40 hover:from-blue-50 hover:to-blue-100/60 border border-slate-200 hover:border-blue-300 rounded-xl transition-all text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   >
                     <CreditCard className="w-5 h-5 text-blue-600 shrink-0" />
@@ -611,6 +743,7 @@ export function LeftSidebar({
             id="root"
             nodes={nodes}
             selectedId={selectedId}
+            selectedIds={selectedIds}
             onSelect={onSelectNode}
           />
         </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   AlignCenter,
   AlignCenterHorizontal,
@@ -10,13 +10,18 @@ import {
   AlignRight,
   AlignStartHorizontal,
   AlignStartVertical,
+  Check,
   Code2,
   Crosshair,
+  Download,
   Files,
+  ListChecks,
+  Palette,
   Plus,
   RotateCcw,
   SlidersHorizontal,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import type {
   EditorNode,
@@ -25,6 +30,7 @@ import type {
   ThemeVarCategory,
   ThemeVariable,
 } from '../types/editor';
+import { THEME_PRESETS } from '../constants/editorDefaults';
 import { ICON_LIBRARY } from '../constants/lucideIcons';
 import { DevToolsPanel } from './DevToolsPanel';
 import {
@@ -42,12 +48,18 @@ import {
   TRANSITION_PROPERTY_CLASSES,
   centerNodeInParent,
   clearNodeAlignment,
+  detectMatchingThemePresetId,
   getComponentVariants,
   getNodeAlignmentState,
+  getSharedGroupTokenAcrossNodes,
+  getSharedSpacingValueAcrossNodes,
+  getSharedTextColorAcrossNodes,
   getTailwindGroupToken,
   getTailwindSpacingValue,
   getTailwindTextColor,
   normalizeCssVarName,
+  parseImportedTheme,
+  serializeThemeVariablesToJson,
   setNodeHorizontalAlignment,
   setNodeVerticalAlignment,
   setTailwindBgColor,
@@ -58,12 +70,20 @@ import {
   toggleTailwindGroup,
   type SpacingPrefix,
 } from '../utils/editorLogic';
+import { downloadTextFile } from '../utils/exportFormats';
 
 interface InspectorPanelProps {
   selectedId: string;
+  selectedIds: string[];
   selectedNode: EditorNode | undefined;
   nodes: NodesMap;
   onUpdateNode: (key: string, value: string, isProp?: boolean) => void;
+  onBulkUpdateClassName: (
+    updater: (currClass: string, node: EditorNode) => string
+  ) => void;
+  onAppendBulkClasses: (extraClasses: string) => void;
+  onClearMultiSelect: () => void;
+  onBulkDeleteNodes: () => void;
   onChangeVariant: (variantId: string) => void;
   onReplaceNodes: (nextNodes: NodesMap) => void;
   onDuplicateNode: () => void;
@@ -72,6 +92,7 @@ interface InspectorPanelProps {
   onAddThemeVar: (name: string, value: string, category: ThemeVarCategory) => void;
   onUpdateThemeVar: (id: string, value: string) => void;
   onDeleteThemeVar: (id: string) => void;
+  onReplaceThemeVars: (nextVars: ThemeVariable[]) => void;
   seoMetadata: SeoMetadata;
   onChangeSeo: (field: keyof SeoMetadata, value: string) => void;
 }
@@ -251,9 +272,14 @@ const VERTICAL_ALIGNMENT_ACTIONS = [
 
 export function InspectorPanel({
   selectedId,
+  selectedIds,
   selectedNode,
   nodes,
   onUpdateNode,
+  onBulkUpdateClassName,
+  onAppendBulkClasses,
+  onClearMultiSelect,
+  onBulkDeleteNodes,
   onChangeVariant,
   onReplaceNodes,
   onDuplicateNode,
@@ -262,6 +288,7 @@ export function InspectorPanel({
   onAddThemeVar,
   onUpdateThemeVar,
   onDeleteThemeVar,
+  onReplaceThemeVars,
   seoMetadata,
   onChangeSeo,
 }: InspectorPanelProps) {
@@ -270,42 +297,92 @@ export function InspectorPanel({
   );
   const [showIndividualSides, setShowIndividualSides] = useState(false);
   const [showAddVar, setShowAddVar] = useState(false);
+  const [showImportTheme, setShowImportTheme] = useState(false);
+  const [importThemeDraft, setImportThemeDraft] = useState('');
+  const [importThemeError, setImportThemeError] = useState('');
+  const [themeStatusMessage, setThemeStatusMessage] = useState('');
+  const themeFileInputRef = useRef<HTMLInputElement | null>(null);
   const [newVarName, setNewVarName] = useState('');
   const [newVarCategory, setNewVarCategory] =
     useState<ThemeVarCategory>('color');
   const [newVarValue, setNewVarValue] = useState('#7c3aed');
+  const [bulkCustomClasses, setBulkCustomClasses] = useState('');
+
+  const activeThemePresetId = detectMatchingThemePresetId(themeVars, THEME_PRESETS);
+
+  const showTemporaryThemeStatus = (msg: string) => {
+    setThemeStatusMessage(msg);
+    window.setTimeout(() => {
+      setThemeStatusMessage((curr) => (curr === msg ? '' : curr));
+    }, 2400);
+  };
+
+  const applyImportedThemeText = (rawText: string) => {
+    const parsed = parseImportedTheme(rawText);
+    if (!parsed.ok) {
+      setImportThemeError(parsed.error);
+      return;
+    }
+    setImportThemeError('');
+    onReplaceThemeVars(parsed.variables);
+    setImportThemeDraft('');
+    setShowImportTheme(false);
+    showTemporaryThemeStatus(
+      `Zaimportowano ${parsed.variables.length} zmiennych motywu`
+    );
+  };
+
+  const activeIds =
+    selectedIds.length > 1
+      ? selectedIds.filter((id) => Boolean(nodes[id]))
+      : selectedNode
+        ? [selectedId]
+        : [];
+  const isMultiSelect = activeIds.length > 1;
 
   const classNameValue = selectedNode?.props.className || '';
   const classTokens = classNameValue.split(/\s+/).filter(Boolean);
 
+  const applyClassUpdate = (
+    updater: (currClass: string, node: EditorNode) => string
+  ) => {
+    if (isMultiSelect) {
+      onBulkUpdateClassName(updater);
+    } else if (selectedNode) {
+      onUpdateNode('className', updater(classNameValue, selectedNode), true);
+    }
+  };
+
+  const readSpacing = (prefix: SpacingPrefix): string =>
+    isMultiSelect
+      ? getSharedSpacingValueAcrossNodes(nodes, activeIds, prefix)
+      : getTailwindSpacingValue(classNameValue, prefix);
+
+  const readGroupToken = (groupClasses: readonly string[]): string =>
+    isMultiSelect
+      ? getSharedGroupTokenAcrossNodes(nodes, activeIds, groupClasses)
+      : getTailwindGroupToken(classNameValue, groupClasses);
+
   const hasSideTokens = (
     ['pt', 'pr', 'pb', 'pl', 'mt', 'mr', 'mb', 'ml'] as SpacingPrefix[]
-  ).some((prefix) => Boolean(getTailwindSpacingValue(classNameValue, prefix)));
+  ).some((prefix) => Boolean(readSpacing(prefix)));
 
   const sidesVisible = showIndividualSides || hasSideTokens;
 
   const handleSpacingChange = (prefix: SpacingPrefix, value: string) => {
-    const updated = setTailwindSpacingValue(classNameValue, prefix, value);
-    onUpdateNode('className', updated, true);
+    applyClassUpdate((curr) => setTailwindSpacingValue(curr, prefix, value));
   };
 
-  const activeTextAlign = getTailwindGroupToken(
-    classNameValue,
-    TEXT_ALIGN_CLASSES
-  );
-  const activeFontWeight = getTailwindGroupToken(
-    classNameValue,
-    FONT_WEIGHT_CLASSES
-  );
-  const activeTextColor = getTailwindTextColor(classNameValue);
+  const activeTextAlign = readGroupToken(TEXT_ALIGN_CLASSES);
+  const activeFontWeight = readGroupToken(FONT_WEIGHT_CLASSES);
+  const activeTextColor = isMultiSelect
+    ? getSharedTextColorAcrossNodes(nodes, activeIds)
+    : getTailwindTextColor(classNameValue);
 
-  const activeShadow = getTailwindGroupToken(classNameValue, BOX_SHADOW_CLASSES);
+  const activeShadow = readGroupToken(BOX_SHADOW_CLASSES);
   const hasShadow = Boolean(activeShadow && activeShadow !== 'shadow-none');
 
-  const activeRadius = getTailwindGroupToken(
-    classNameValue,
-    BORDER_RADIUS_CLASSES
-  );
+  const activeRadius = readGroupToken(BORDER_RADIUS_CLASSES);
   const hasRadius = Boolean(activeRadius && activeRadius !== 'rounded-none');
 
   const activeFlexDirection = getTailwindGroupToken(
@@ -325,31 +402,18 @@ export function InspectorPanel({
     selectedNode?.parentId ? nodes[selectedNode.parentId] : undefined;
   const parentClassName = parentNode?.props.className || '';
   const alignmentState = getNodeAlignmentState(classNameValue, parentClassName);
-  const canAlignToParent = Boolean(selectedNode && selectedId !== 'root' && parentNode);
+  const canAlignToParent = Boolean(
+    !isMultiSelect && selectedNode && selectedId !== 'root' && parentNode
+  );
   const hasAnyAlignment = Boolean(
     alignmentState.horizontal || alignmentState.vertical
   );
 
-  const activeTransitionProp = getTailwindGroupToken(
-    classNameValue,
-    TRANSITION_PROPERTY_CLASSES
-  );
-  const activeTransitionDuration = getTailwindGroupToken(
-    classNameValue,
-    TRANSITION_DURATION_CLASSES
-  );
-  const activeTransitionEasing = getTailwindGroupToken(
-    classNameValue,
-    TRANSITION_EASING_CLASSES
-  );
-  const activeHoverTransform = getTailwindGroupToken(
-    classNameValue,
-    HOVER_TRANSFORM_CLASSES
-  );
-  const activeKeyframeAnimation = getTailwindGroupToken(
-    classNameValue,
-    KEYFRAME_ANIMATION_CLASSES
-  );
+  const activeTransitionProp = readGroupToken(TRANSITION_PROPERTY_CLASSES);
+  const activeTransitionDuration = readGroupToken(TRANSITION_DURATION_CLASSES);
+  const activeTransitionEasing = readGroupToken(TRANSITION_EASING_CLASSES);
+  const activeHoverTransform = readGroupToken(HOVER_TRANSFORM_CLASSES);
+  const activeKeyframeAnimation = readGroupToken(KEYFRAME_ANIMATION_CLASSES);
   const hasAnyAnimation = Boolean(
     activeTransitionProp ||
       activeTransitionDuration ||
@@ -362,10 +426,16 @@ export function InspectorPanel({
     <aside className="w-80 bg-white border-l border-slate-200 flex flex-col shrink-0 z-20">
       <div className="h-14 px-4 border-b border-slate-200 flex items-center justify-between shrink-0">
         <h2 className="font-bold text-sm text-slate-900">Inspektor</h2>
-        {selectedNode && (
-          <span className="text-xs text-slate-500 font-mono">
-            {selectedNode.type}
+        {isMultiSelect ? (
+          <span className="px-2 py-0.5 rounded-md bg-violet-50 border border-violet-200 text-violet-700 text-xs font-semibold">
+            {activeIds.length} zazn.
           </span>
+        ) : (
+          selectedNode && (
+            <span className="text-xs text-slate-500 font-mono">
+              {selectedNode.type}
+            </span>
+          )
         )}
       </div>
 
@@ -413,55 +483,94 @@ export function InspectorPanel({
           onUpdateNode={onUpdateNode}
           onReplaceNodes={onReplaceNodes}
         />
-      ) : selectedNode ? (
+      ) : selectedNode || isMultiSelect ? (
         <div className="p-4 flex-1 overflow-y-auto flex flex-col gap-5">
-          <div className="space-y-1.5">
-            <label
-              htmlFor="inspector-layer-name"
-              className="block text-[11px] font-bold text-slate-500 tracking-wide"
+          {isMultiSelect && (
+            <section
+              aria-label="Multi-Selection"
+              className="p-3 bg-violet-50/90 border border-violet-200 rounded-xl space-y-2"
             >
-              Nazwa warstwy
-            </label>
-            <input
-              id="inspector-layer-name"
-              type="text"
-              placeholder="np. Submit Button"
-              value={selectedNode.name || ''}
-              onChange={(e) => onUpdateNode('name', e.target.value)}
-              className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-            />
-          </div>
-
-          {(() => {
-            const variants = getComponentVariants(selectedNode.type);
-            if (variants.length === 0) return null;
-            return (
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="inspector-node-variant"
-                  className="block text-[11px] font-bold text-slate-500 tracking-wide"
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-violet-900">
+                  <ListChecks className="w-3.5 h-3.5 text-violet-600" />
+                  Multi-Selection ({activeIds.length})
+                </div>
+                <button
+                  type="button"
+                  aria-label="Wyczyść wielokrotne zaznaczenie"
+                  onClick={onClearMultiSelect}
+                  className="text-[11px] font-medium text-violet-700 hover:text-violet-900 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 rounded px-1"
                 >
-                  Wariant
-                </label>
-                <select
-                  id="inspector-node-variant"
-                  aria-label="Wariant komponentu"
-                  value={selectedNode.variant || ''}
-                  onChange={(e) => onChangeVariant(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                >
-                  <option value="">Własny / brak</option>
-                  {variants.map((variant) => (
-                    <option key={variant.id} value={variant.id}>
-                      {variant.label}
-                    </option>
-                  ))}
-                </select>
+                  Wyczyść
+                </button>
               </div>
-            );
-          })()}
+              <div className="flex flex-wrap gap-1">
+                {activeIds.map((nodeId) => (
+                  <span
+                    key={nodeId}
+                    className="px-1.5 py-0.5 rounded bg-white border border-violet-200 text-[10px] font-medium text-violet-800 truncate max-w-[120px]"
+                  >
+                    {nodes[nodeId]?.name || nodes[nodeId]?.type}
+                  </span>
+                ))}
+              </div>
+              <p className="text-[11px] text-violet-700/90 leading-snug">
+                Zmiany w sekcjach Layout, Typography, Effects, Animations i Theme aktualizują wszystkie zaznaczone elementy.
+              </p>
+            </section>
+          )}
 
-          {selectedId !== 'root' && (
+          {!isMultiSelect && selectedNode && (
+            <div className="space-y-1.5">
+              <label
+                htmlFor="inspector-layer-name"
+                className="block text-[11px] font-bold text-slate-500 tracking-wide"
+              >
+                Nazwa warstwy
+              </label>
+              <input
+                id="inspector-layer-name"
+                type="text"
+                placeholder="np. Submit Button"
+                value={selectedNode.name || ''}
+                onChange={(e) => onUpdateNode('name', e.target.value)}
+                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+              />
+            </div>
+          )}
+
+          {!isMultiSelect &&
+            selectedNode &&
+            (() => {
+              const variants = getComponentVariants(selectedNode.type);
+              if (variants.length === 0) return null;
+              return (
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="inspector-node-variant"
+                    className="block text-[11px] font-bold text-slate-500 tracking-wide"
+                  >
+                    Wariant
+                  </label>
+                  <select
+                    id="inspector-node-variant"
+                    aria-label="Wariant komponentu"
+                    value={selectedNode.variant || ''}
+                    onChange={(e) => onChangeVariant(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                  >
+                    <option value="">Własny / brak</option>
+                    {variants.map((variant) => (
+                      <option key={variant.id} value={variant.id}>
+                        {variant.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })()}
+
+          {!isMultiSelect && selectedId !== 'root' && (
             <button
               type="button"
               title="Duplikuj (Ctrl+Alt+D)"
@@ -472,7 +581,7 @@ export function InspectorPanel({
             </button>
           )}
 
-          {selectedNode.type === 'Icon' && (
+          {!isMultiSelect && selectedNode?.type === 'Icon' && (
             <section
               aria-label="Wybór ikony"
               className="space-y-2 p-3 bg-slate-50 rounded-xl border border-slate-200/80"
@@ -505,148 +614,150 @@ export function InspectorPanel({
             </section>
           )}
 
-          <section
-            aria-label="Alignment"
-            className="space-y-2 p-3 bg-slate-50 rounded-xl border border-slate-200/80"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-[11px] font-bold text-slate-500 tracking-wide">
-                  Alignment
-                </h3>
-                {canAlignToParent && (
-                  <span className="text-[10px] font-mono text-slate-400">
-                    {alignmentState.layoutKind}
-                  </span>
+          {!isMultiSelect && selectedNode && (
+            <section
+              aria-label="Alignment"
+              className="space-y-2 p-3 bg-slate-50 rounded-xl border border-slate-200/80"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="text-[11px] font-bold text-slate-500 tracking-wide">
+                    Alignment
+                  </h3>
+                  {canAlignToParent && (
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {alignmentState.layoutKind}
+                    </span>
+                  )}
+                </div>
+                {canAlignToParent && hasAnyAlignment && (
+                  <button
+                    type="button"
+                    aria-label="Resetuj wyrównanie"
+                    onClick={() =>
+                      onUpdateNode(
+                        'className',
+                        clearNodeAlignment(classNameValue),
+                        true
+                      )
+                    }
+                    className="inline-flex items-center gap-1 text-[10px] font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1"
+                  >
+                    <RotateCcw className="w-2.5 h-2.5" />
+                    Reset
+                  </button>
                 )}
               </div>
-              {canAlignToParent && hasAnyAlignment && (
+
+              <div
+                role="toolbar"
+                aria-label="Szybkie wyrównanie w kontenerze"
+                className="flex items-center justify-between gap-0.5 p-1 bg-white border border-slate-200 rounded-lg"
+              >
+                {HORIZONTAL_ALIGNMENT_ACTIONS.map(({ align, label, icon: Icon }) => {
+                  const isActive =
+                    canAlignToParent && alignmentState.horizontal === align;
+                  return (
+                    <button
+                      key={align}
+                      type="button"
+                      disabled={!canAlignToParent}
+                      title={label}
+                      aria-label={label}
+                      aria-pressed={isActive}
+                      onClick={() => {
+                        const updated = setNodeHorizontalAlignment(
+                          classNameValue,
+                          parentClassName,
+                          isActive ? '' : align
+                        );
+                        onUpdateNode('className', updated, true);
+                      }}
+                      className={`flex-1 flex items-center justify-center py-1.5 rounded-md transition-colors disabled:opacity-35 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                        isActive
+                          ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-300'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                    </button>
+                  );
+                })}
+
+                <div className="w-px h-4 bg-slate-200 mx-0.5 shrink-0" aria-hidden="true" />
+
+                {VERTICAL_ALIGNMENT_ACTIONS.map(({ align, label, icon: Icon }) => {
+                  const isActive =
+                    canAlignToParent && alignmentState.vertical === align;
+                  return (
+                    <button
+                      key={align}
+                      type="button"
+                      disabled={!canAlignToParent}
+                      title={label}
+                      aria-label={label}
+                      aria-pressed={isActive}
+                      onClick={() => {
+                        const updated = setNodeVerticalAlignment(
+                          classNameValue,
+                          parentClassName,
+                          isActive ? '' : align
+                        );
+                        onUpdateNode('className', updated, true);
+                      }}
+                      className={`flex-1 flex items-center justify-center py-1.5 rounded-md transition-colors disabled:opacity-35 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                        isActive
+                          ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-300'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                    </button>
+                  );
+                })}
+
+                <div className="w-px h-4 bg-slate-200 mx-0.5 shrink-0" aria-hidden="true" />
+
                 <button
                   type="button"
-                  aria-label="Resetuj wyrównanie"
-                  onClick={() =>
-                    onUpdateNode(
-                      'className',
-                      clearNodeAlignment(classNameValue),
-                      true
-                    )
-                  }
-                  className="inline-flex items-center gap-1 text-[10px] font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1"
-                >
-                  <RotateCcw className="w-2.5 h-2.5" />
-                  Reset
-                </button>
-              )}
-            </div>
-
-            <div
-              role="toolbar"
-              aria-label="Szybkie wyrównanie w kontenerze"
-              className="flex items-center justify-between gap-0.5 p-1 bg-white border border-slate-200 rounded-lg"
-            >
-              {HORIZONTAL_ALIGNMENT_ACTIONS.map(({ align, label, icon: Icon }) => {
-                const isActive =
-                  canAlignToParent && alignmentState.horizontal === align;
-                return (
-                  <button
-                    key={align}
-                    type="button"
-                    disabled={!canAlignToParent}
-                    title={label}
-                    aria-label={label}
-                    aria-pressed={isActive}
-                    onClick={() => {
-                      const updated = setNodeHorizontalAlignment(
-                        classNameValue,
-                        parentClassName,
-                        isActive ? '' : align
-                      );
-                      onUpdateNode('className', updated, true);
-                    }}
-                    className={`flex-1 flex items-center justify-center py-1.5 rounded-md transition-colors disabled:opacity-35 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                      isActive
-                        ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-300'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                  </button>
-                );
-              })}
-
-              <div className="w-px h-4 bg-slate-200 mx-0.5 shrink-0" aria-hidden="true" />
-
-              {VERTICAL_ALIGNMENT_ACTIONS.map(({ align, label, icon: Icon }) => {
-                const isActive =
-                  canAlignToParent && alignmentState.vertical === align;
-                return (
-                  <button
-                    key={align}
-                    type="button"
-                    disabled={!canAlignToParent}
-                    title={label}
-                    aria-label={label}
-                    aria-pressed={isActive}
-                    onClick={() => {
-                      const updated = setNodeVerticalAlignment(
-                        classNameValue,
-                        parentClassName,
-                        isActive ? '' : align
-                      );
-                      onUpdateNode('className', updated, true);
-                    }}
-                    className={`flex-1 flex items-center justify-center py-1.5 rounded-md transition-colors disabled:opacity-35 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                      isActive
-                        ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-300'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                  </button>
-                );
-              })}
-
-              <div className="w-px h-4 bg-slate-200 mx-0.5 shrink-0" aria-hidden="true" />
-
-              <button
-                type="button"
-                disabled={!canAlignToParent}
-                title="Wyśrodkuj w rodzicu (poziomo i pionowo)"
-                aria-label="Wyśrodkuj w rodzicu"
-                aria-pressed={
-                  canAlignToParent &&
-                  alignmentState.horizontal === 'center' &&
-                  alignmentState.vertical === 'middle'
-                }
-                onClick={() => {
-                  const isBothCentered =
+                  disabled={!canAlignToParent}
+                  title="Wyśrodkuj w rodzicu (poziomo i pionowo)"
+                  aria-label="Wyśrodkuj w rodzicu"
+                  aria-pressed={
+                    canAlignToParent &&
                     alignmentState.horizontal === 'center' &&
-                    alignmentState.vertical === 'middle';
-                  const updated = isBothCentered
-                    ? clearNodeAlignment(classNameValue)
-                    : centerNodeInParent(classNameValue, parentClassName);
-                  onUpdateNode('className', updated, true);
-                }}
-                className={`flex-1 flex items-center justify-center py-1.5 rounded-md transition-colors disabled:opacity-35 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                  canAlignToParent &&
-                  alignmentState.horizontal === 'center' &&
-                  alignmentState.vertical === 'middle'
-                    ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-300'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <Crosshair className="w-3.5 h-3.5" />
-              </button>
-            </div>
+                    alignmentState.vertical === 'middle'
+                  }
+                  onClick={() => {
+                    const isBothCentered =
+                      alignmentState.horizontal === 'center' &&
+                      alignmentState.vertical === 'middle';
+                    const updated = isBothCentered
+                      ? clearNodeAlignment(classNameValue)
+                      : centerNodeInParent(classNameValue, parentClassName);
+                    onUpdateNode('className', updated, true);
+                  }}
+                  className={`flex-1 flex items-center justify-center py-1.5 rounded-md transition-colors disabled:opacity-35 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                    canAlignToParent &&
+                    alignmentState.horizontal === 'center' &&
+                    alignmentState.vertical === 'middle'
+                      ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-300'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Crosshair className="w-3.5 h-3.5" />
+                </button>
+              </div>
 
-            {!canAlignToParent && (
-              <p className="text-[10px] text-slate-400">
-                Zaznacz element potomny, aby przypiąć go do krawędzi rodzica.
-              </p>
-            )}
-          </section>
+              {!canAlignToParent && (
+                <p className="text-[10px] text-slate-400">
+                  Zaznacz element potomny, aby przypiąć go do krawędzi rodzica.
+                </p>
+              )}
+            </section>
+          )}
 
-          {selectedNode.type === 'Container' && (
+          {!isMultiSelect && selectedNode?.type === 'Container' && (
             <div className="space-y-2 p-3 bg-slate-50 rounded-xl border border-slate-200/80">
               <span className="block text-[11px] font-bold text-slate-500 tracking-wide">
                 Układ (Flex / Grid)
@@ -688,7 +799,7 @@ export function InspectorPanel({
             </div>
           )}
 
-          {selectedNode.type === 'Container' && (
+          {!isMultiSelect && selectedNode?.type === 'Container' && (
             <section
               aria-label="Flexbox"
               className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200/80"
@@ -787,7 +898,7 @@ export function InspectorPanel({
             </section>
           )}
 
-          {selectedNode.type === 'Grid' && (
+          {!isMultiSelect && selectedNode?.type === 'Grid' && (
             <div className="space-y-2.5 p-3 bg-slate-50 rounded-xl border border-slate-200/80">
               <span className="block text-[11px] font-bold text-slate-500 tracking-wide">
                 Kolumny Grid
@@ -893,7 +1004,7 @@ export function InspectorPanel({
                     </span>
                     <select
                       aria-label={`Padding ${label}`}
-                      value={getTailwindSpacingValue(classNameValue, prefix)}
+                      value={readSpacing(prefix)}
                       onChange={(e) =>
                         handleSpacingChange(prefix, e.target.value)
                       }
@@ -926,7 +1037,7 @@ export function InspectorPanel({
                       </span>
                       <select
                         aria-label={`Padding ${label}`}
-                        value={getTailwindSpacingValue(classNameValue, prefix)}
+                        value={readSpacing(prefix)}
                         onChange={(e) =>
                           handleSpacingChange(prefix, e.target.value)
                         }
@@ -963,7 +1074,7 @@ export function InspectorPanel({
                     </span>
                     <select
                       aria-label={`Margin ${label}`}
-                      value={getTailwindSpacingValue(classNameValue, prefix)}
+                      value={readSpacing(prefix)}
                       onChange={(e) =>
                         handleSpacingChange(prefix, e.target.value)
                       }
@@ -996,7 +1107,7 @@ export function InspectorPanel({
                       </span>
                       <select
                         aria-label={`Margin ${label}`}
-                        value={getTailwindSpacingValue(classNameValue, prefix)}
+                        value={readSpacing(prefix)}
                         onChange={(e) =>
                           handleSpacingChange(prefix, e.target.value)
                         }
@@ -1015,25 +1126,61 @@ export function InspectorPanel({
               )}
             </div>
 
-            <div className="space-y-1.5 pt-2 border-t border-slate-200/70">
-              <label
-                htmlFor="inspector-layout-custom-classes"
-                className="block text-[11px] font-semibold text-slate-600"
+            {isMultiSelect ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!bulkCustomClasses.trim()) return;
+                  onAppendBulkClasses(bulkCustomClasses);
+                  setBulkCustomClasses('');
+                }}
+                className="space-y-1.5 pt-2 border-t border-slate-200/70"
               >
-                Custom Classes
-              </label>
-              <input
-                id="inspector-layout-custom-classes"
-                type="text"
-                value={classNameValue}
-                onChange={(e) => onUpdateNode('className', e.target.value, true)}
-                placeholder="np. max-w-md mx-auto bg-indigo-50"
-                className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+                <label
+                  htmlFor="inspector-layout-bulk-classes"
+                  className="block text-[11px] font-semibold text-slate-600"
+                >
+                  Custom Classes (Bulk)
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    id="inspector-layout-bulk-classes"
+                    type="text"
+                    value={bulkCustomClasses}
+                    onChange={(e) => setBulkCustomClasses(e.target.value)}
+                    placeholder="np. tracking-wide border"
+                    className="flex-1 min-w-0 px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!bulkCustomClasses.trim()}
+                    className="px-2.5 py-1.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white text-xs font-semibold rounded-md transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                  >
+                    Zastosuj
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-1.5 pt-2 border-t border-slate-200/70">
+                <label
+                  htmlFor="inspector-layout-custom-classes"
+                  className="block text-[11px] font-semibold text-slate-600"
+                >
+                  Custom Classes
+                </label>
+                <input
+                  id="inspector-layout-custom-classes"
+                  type="text"
+                  value={classNameValue}
+                  onChange={(e) => onUpdateNode('className', e.target.value, true)}
+                  placeholder="np. max-w-md mx-auto bg-indigo-50"
+                  className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
           </section>
 
-          {selectedNode.type !== 'Image' && (
+          {(isMultiSelect || selectedNode?.type !== 'Image') && (
             <section
               aria-label="Typography"
               className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200/80"
@@ -1057,12 +1204,13 @@ export function InspectorPanel({
                         aria-label={label}
                         aria-pressed={isActive}
                         onClick={() => {
-                          const updated = toggleTailwindGroup(
-                            classNameValue,
-                            [...TEXT_ALIGN_CLASSES],
-                            isActive ? '' : cls
+                          applyClassUpdate((curr) =>
+                            toggleTailwindGroup(
+                              curr,
+                              [...TEXT_ALIGN_CLASSES],
+                              isActive ? '' : cls
+                            )
                           );
-                          onUpdateNode('className', updated, true);
                         }}
                         className={`flex items-center justify-center py-1.5 border rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                           isActive
@@ -1085,12 +1233,14 @@ export function InspectorPanel({
                   aria-label="Font weight"
                   value={activeFontWeight}
                   onChange={(e) => {
-                    const updated = toggleTailwindGroup(
-                      classNameValue,
-                      [...FONT_WEIGHT_CLASSES],
-                      e.target.value
+                    const nextWeight = e.target.value;
+                    applyClassUpdate((curr) =>
+                      toggleTailwindGroup(
+                        curr,
+                        [...FONT_WEIGHT_CLASSES],
+                        nextWeight
+                      )
                     );
-                    onUpdateNode('className', updated, true);
                   }}
                   className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -1116,11 +1266,7 @@ export function InspectorPanel({
                       <button
                         type="button"
                         onClick={() =>
-                          onUpdateNode(
-                            'className',
-                            setTailwindTextColor(classNameValue, ''),
-                            true
-                          )
+                          applyClassUpdate((curr) => setTailwindTextColor(curr, ''))
                         }
                         className="text-[10px] font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-0.5"
                       >
@@ -1140,11 +1286,9 @@ export function InspectorPanel({
                         aria-label={`Kolor tekstu ${label}`}
                         aria-pressed={isActive}
                         onClick={() => {
-                          const updated = setTailwindTextColor(
-                            classNameValue,
-                            isActive ? '' : cls
+                          applyClassUpdate((curr) =>
+                            setTailwindTextColor(curr, isActive ? '' : cls)
                           );
-                          onUpdateNode('className', updated, true);
                         }}
                         className={`w-6 h-6 rounded-md border transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${swatchClass} ${
                           isActive
@@ -1178,12 +1322,13 @@ export function InspectorPanel({
                   aria-checked={hasShadow}
                   aria-label="Przełącz cień"
                   onClick={() => {
-                    const updated = toggleTailwindGroup(
-                      classNameValue,
-                      [...BOX_SHADOW_CLASSES],
-                      hasShadow ? '' : 'shadow-md'
+                    applyClassUpdate((curr) =>
+                      toggleTailwindGroup(
+                        curr,
+                        [...BOX_SHADOW_CLASSES],
+                        hasShadow ? '' : 'shadow-md'
+                      )
                     );
-                    onUpdateNode('className', updated, true);
                   }}
                   className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                     hasShadow
@@ -1209,12 +1354,13 @@ export function InspectorPanel({
                       type="button"
                       aria-pressed={isActive}
                       onClick={() => {
-                        const updated = toggleTailwindGroup(
-                          classNameValue,
-                          [...BOX_SHADOW_CLASSES],
-                          isActive ? '' : opt.cls
+                        applyClassUpdate((curr) =>
+                          toggleTailwindGroup(
+                            curr,
+                            [...BOX_SHADOW_CLASSES],
+                            isActive ? '' : opt.cls
+                          )
                         );
-                        onUpdateNode('className', updated, true);
                       }}
                       className={`py-1 px-1.5 border rounded-md text-[10px] font-mono transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                         isActive
@@ -1240,12 +1386,13 @@ export function InspectorPanel({
                   aria-checked={hasRadius}
                   aria-label="Przełącz zaokrąglenie"
                   onClick={() => {
-                    const updated = toggleTailwindGroup(
-                      classNameValue,
-                      [...BORDER_RADIUS_CLASSES],
-                      hasRadius ? '' : 'rounded-lg'
+                    applyClassUpdate((curr) =>
+                      toggleTailwindGroup(
+                        curr,
+                        [...BORDER_RADIUS_CLASSES],
+                        hasRadius ? '' : 'rounded-lg'
+                      )
                     );
-                    onUpdateNode('className', updated, true);
                   }}
                   className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                     hasRadius
@@ -1271,12 +1418,13 @@ export function InspectorPanel({
                       type="button"
                       aria-pressed={isActive}
                       onClick={() => {
-                        const updated = toggleTailwindGroup(
-                          classNameValue,
-                          [...BORDER_RADIUS_CLASSES],
-                          isActive ? '' : opt.cls
+                        applyClassUpdate((curr) =>
+                          toggleTailwindGroup(
+                            curr,
+                            [...BORDER_RADIUS_CLASSES],
+                            isActive ? '' : opt.cls
+                          )
                         );
-                        onUpdateNode('className', updated, true);
                       }}
                       className={`py-1 px-1.5 border rounded-md text-[10px] font-mono transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                         isActive
@@ -1305,28 +1453,29 @@ export function InspectorPanel({
                   type="button"
                   aria-label="Resetuj animacje"
                   onClick={() => {
-                    const cleared = toggleTailwindGroup(
+                    applyClassUpdate((curr) =>
                       toggleTailwindGroup(
                         toggleTailwindGroup(
                           toggleTailwindGroup(
                             toggleTailwindGroup(
-                              classNameValue,
-                              [...TRANSITION_PROPERTY_CLASSES],
+                              toggleTailwindGroup(
+                                curr,
+                                [...TRANSITION_PROPERTY_CLASSES],
+                                ''
+                              ),
+                              [...TRANSITION_DURATION_CLASSES],
                               ''
                             ),
-                            [...TRANSITION_DURATION_CLASSES],
+                            [...TRANSITION_EASING_CLASSES],
                             ''
                           ),
-                          [...TRANSITION_EASING_CLASSES],
+                          [...HOVER_TRANSFORM_CLASSES],
                           ''
                         ),
-                        [...HOVER_TRANSFORM_CLASSES],
+                        [...KEYFRAME_ANIMATION_CLASSES],
                         ''
-                      ),
-                      [...KEYFRAME_ANIMATION_CLASSES],
-                      ''
+                      )
                     );
-                    onUpdateNode('className', cleared, true);
                   }}
                   className="inline-flex items-center gap-1 text-[10px] font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1"
                 >
@@ -1345,12 +1494,14 @@ export function InspectorPanel({
                 aria-label="Typ przejścia"
                 value={activeTransitionProp}
                 onChange={(e) => {
-                  const updated = toggleTailwindGroup(
-                    classNameValue,
-                    [...TRANSITION_PROPERTY_CLASSES],
-                    e.target.value
+                  const val = e.target.value;
+                  applyClassUpdate((curr) =>
+                    toggleTailwindGroup(
+                      curr,
+                      [...TRANSITION_PROPERTY_CLASSES],
+                      val
+                    )
                   );
-                  onUpdateNode('className', updated, true);
                 }}
                 className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
@@ -1373,12 +1524,14 @@ export function InspectorPanel({
                   aria-label="Czas trwania animacji"
                   value={activeTransitionDuration}
                   onChange={(e) => {
-                    const updated = toggleTailwindGroup(
-                      classNameValue,
-                      [...TRANSITION_DURATION_CLASSES],
-                      e.target.value
+                    const val = e.target.value;
+                    applyClassUpdate((curr) =>
+                      toggleTailwindGroup(
+                        curr,
+                        [...TRANSITION_DURATION_CLASSES],
+                        val
+                      )
                     );
-                    onUpdateNode('className', updated, true);
                   }}
                   className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -1400,12 +1553,14 @@ export function InspectorPanel({
                   aria-label="Krzywa przejścia"
                   value={activeTransitionEasing}
                   onChange={(e) => {
-                    const updated = toggleTailwindGroup(
-                      classNameValue,
-                      [...TRANSITION_EASING_CLASSES],
-                      e.target.value
+                    const val = e.target.value;
+                    applyClassUpdate((curr) =>
+                      toggleTailwindGroup(
+                        curr,
+                        [...TRANSITION_EASING_CLASSES],
+                        val
+                      )
                     );
-                    onUpdateNode('className', updated, true);
                   }}
                   className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
@@ -1428,12 +1583,14 @@ export function InspectorPanel({
                 aria-label="Transformacja przy najechaniu"
                 value={activeHoverTransform}
                 onChange={(e) => {
-                  const updated = toggleTailwindGroup(
-                    classNameValue,
-                    [...HOVER_TRANSFORM_CLASSES],
-                    e.target.value
+                  const val = e.target.value;
+                  applyClassUpdate((curr) =>
+                    toggleTailwindGroup(
+                      curr,
+                      [...HOVER_TRANSFORM_CLASSES],
+                      val
+                    )
                   );
-                  onUpdateNode('className', updated, true);
                 }}
                 className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
@@ -1455,12 +1612,14 @@ export function InspectorPanel({
                 aria-label="Animacja kluczowa"
                 value={activeKeyframeAnimation}
                 onChange={(e) => {
-                  const updated = toggleTailwindGroup(
-                    classNameValue,
-                    [...KEYFRAME_ANIMATION_CLASSES],
-                    e.target.value
+                  const val = e.target.value;
+                  applyClassUpdate((curr) =>
+                    toggleTailwindGroup(
+                      curr,
+                      [...KEYFRAME_ANIMATION_CLASSES],
+                      val
+                    )
                   );
-                  onUpdateNode('className', updated, true);
                 }}
                 className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
@@ -1478,19 +1637,197 @@ export function InspectorPanel({
             aria-label="Theme"
             className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200/80"
           >
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-1.5">
               <h3 className="text-[11px] font-bold text-slate-500 tracking-wide">
                 Theme
               </h3>
-              <button
-                type="button"
-                onClick={() => setShowAddVar((prev) => !prev)}
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1"
-              >
-                <Plus className="w-3 h-3" />
-                {showAddVar ? 'Anuluj' : 'Dodaj zmienną'}
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-expanded={showImportTheme}
+                  onClick={() => {
+                    setShowImportTheme((prev) => !prev);
+                    setShowAddVar(false);
+                    setImportThemeError('');
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1.5 py-0.5 bg-white border border-slate-200"
+                >
+                  <Upload className="w-3 h-3" />
+                  {showImportTheme ? 'Zamknij' : 'Importuj'}
+                </button>
+                <button
+                  type="button"
+                  title="Eksportuj zmienne motywu do JSON"
+                  aria-label="Eksportuj motyw JSON"
+                  onClick={() => {
+                    downloadTextFile(
+                      serializeThemeVariablesToJson(themeVars),
+                      'theme-tokens.json',
+                      'application/json;charset=utf-8'
+                    );
+                    showTemporaryThemeStatus('Wyeksportowano theme-tokens.json');
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 hover:text-slate-900 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1.5 py-0.5 bg-white border border-slate-200"
+                >
+                  <Download className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddVar((prev) => !prev);
+                    setShowImportTheme(false);
+                  }}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:text-blue-700 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded px-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  {showAddVar ? 'Anuluj' : 'Dodaj'}
+                </button>
+              </div>
             </div>
+
+            {themeStatusMessage && (
+              <div
+                role="status"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-medium"
+              >
+                <Check className="w-3.5 h-3.5 shrink-0" />
+                <span>{themeStatusMessage}</span>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600">
+                  <Palette className="w-3 h-3 text-slate-400" />
+                  Presety motywu
+                </span>
+                {activeThemePresetId && (
+                  <span className="text-[10px] font-medium text-blue-600">
+                    Aktywny preset
+                  </span>
+                )}
+              </div>
+              <div
+                role="group"
+                aria-label="Presety motywu"
+                className="grid grid-cols-2 gap-1.5"
+              >
+                {THEME_PRESETS.map((preset) => {
+                  const isActive = activeThemePresetId === preset.id;
+                  const swatches = preset.variables
+                    .filter((v) => v.category === 'color')
+                    .slice(0, 3);
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      aria-pressed={isActive}
+                      title={preset.description}
+                      onClick={() => {
+                        onReplaceThemeVars(
+                          preset.variables.map((v) => ({ ...v }))
+                        );
+                        showTemporaryThemeStatus(`Zastosowano: ${preset.name}`);
+                      }}
+                      className={`p-2 rounded-lg border text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                        isActive
+                          ? 'bg-blue-50/80 border-blue-400 text-blue-900 shadow-xs'
+                          : 'bg-white border-slate-200 hover:border-blue-300 text-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <div className="flex items-center gap-1">
+                          {swatches.map((sw) => (
+                            <svg
+                              key={sw.id}
+                              viewBox="0 0 12 12"
+                              className="w-3 h-3 rounded-xs border border-slate-300/80 shrink-0"
+                              aria-hidden="true"
+                            >
+                              <rect width="12" height="12" fill={sw.value} />
+                            </svg>
+                          ))}
+                        </div>
+                        {isActive && (
+                          <Check className="w-3 h-3 text-blue-600 shrink-0" />
+                        )}
+                      </div>
+                      <span className="block text-[11px] font-semibold leading-tight truncate">
+                        {preset.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {showImportTheme && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  applyImportedThemeText(importThemeDraft);
+                }}
+                className="p-2.5 bg-white border border-slate-200 rounded-lg space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-slate-700">
+                    Importuj motyw (JSON / CSS)
+                  </span>
+                  <input
+                    ref={themeFileInputRef}
+                    type="file"
+                    accept=".json,.css,application/json,text/css"
+                    aria-label="Wczytaj plik motywu (.json lub .css)"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const text = await file.text();
+                        setImportThemeDraft(text);
+                        applyImportedThemeText(text);
+                      } catch {
+                        setImportThemeError('Nie udało się odczytać pliku motywu.');
+                      } finally {
+                        e.target.value = '';
+                      }
+                    }}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => themeFileInputRef.current?.click()}
+                    className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold rounded border border-slate-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  >
+                    Wybierz plik
+                  </button>
+                </div>
+
+                <textarea
+                  aria-label="Wklej JSON lub CSS motywu"
+                  rows={4}
+                  value={importThemeDraft}
+                  onChange={(e) => {
+                    setImportThemeDraft(e.target.value);
+                    if (importThemeError) setImportThemeError('');
+                  }}
+                  placeholder={`:root { --color-primary: #6750A4; }\nlub JSON: { "--color-primary": "#6750A4" }`}
+                  className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-[11px] font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                />
+
+                {importThemeError && (
+                  <p role="alert" className="text-[11px] font-medium text-red-600">
+                    {importThemeError}
+                  </p>
+                )}
+
+                <button
+                  type="submit"
+                  className="w-full py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-md transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  Zastosuj importowany motyw
+                </button>
+              </form>
+            )}
 
             {showAddVar && (
               <form
@@ -1554,9 +1891,27 @@ export function InspectorPanel({
                 const bgVarClass = `bg-[var(${item.name})]`;
                 const sizeVarClass = `text-[length:var(${item.name})]`;
 
-                const isTextApplied = classTokens.includes(textVarClass);
-                const isBgApplied = classTokens.includes(bgVarClass);
-                const isSizeApplied = classTokens.includes(sizeVarClass);
+                const isTextApplied = isMultiSelect
+                  ? activeIds.every((id) =>
+                      (nodes[id]?.props.className || '')
+                        .split(/\s+/)
+                        .includes(textVarClass)
+                    )
+                  : classTokens.includes(textVarClass);
+                const isBgApplied = isMultiSelect
+                  ? activeIds.every((id) =>
+                      (nodes[id]?.props.className || '')
+                        .split(/\s+/)
+                        .includes(bgVarClass)
+                    )
+                  : classTokens.includes(bgVarClass);
+                const isSizeApplied = isMultiSelect
+                  ? activeIds.every((id) =>
+                      (nodes[id]?.props.className || '')
+                        .split(/\s+/)
+                        .includes(sizeVarClass)
+                    )
+                  : classTokens.includes(sizeVarClass);
 
                 return (
                   <div
@@ -1613,13 +1968,11 @@ export function InspectorPanel({
                             aria-label={`Zastosuj kolor tekstu ${item.name}`}
                             aria-pressed={isTextApplied}
                             onClick={() =>
-                              onUpdateNode(
-                                'className',
+                              applyClassUpdate((curr) =>
                                 setTailwindTextColor(
-                                  classNameValue,
+                                  curr,
                                   isTextApplied ? '' : textVarClass
-                                ),
-                                true
+                                )
                               )
                             }
                             className={`px-1.5 py-1 border rounded text-[10px] font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
@@ -1636,13 +1989,11 @@ export function InspectorPanel({
                             aria-label={`Zastosuj tło ${item.name}`}
                             aria-pressed={isBgApplied}
                             onClick={() =>
-                              onUpdateNode(
-                                'className',
+                              applyClassUpdate((curr) =>
                                 setTailwindBgColor(
-                                  classNameValue,
+                                  curr,
                                   isBgApplied ? '' : bgVarClass
-                                ),
-                                true
+                                )
                               )
                             }
                             className={`px-1.5 py-1 border rounded text-[10px] font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
@@ -1661,13 +2012,11 @@ export function InspectorPanel({
                           aria-label={`Zastosuj rozmiar ${item.name}`}
                           aria-pressed={isSizeApplied}
                           onClick={() =>
-                            onUpdateNode(
-                              'className',
+                            applyClassUpdate((curr) =>
                               setTailwindFontSize(
-                                classNameValue,
+                                curr,
                                 isSizeApplied ? '' : sizeVarClass
-                              ),
-                              true
+                              )
                             )
                           }
                           className={`px-2 py-1 border rounded text-[10px] font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
@@ -1746,27 +2095,29 @@ export function InspectorPanel({
             </div>
           </section>
 
-          {['Heading', 'Text', 'Button', 'Badge'].includes(
-            selectedNode.type
-          ) && (
-            <div className="space-y-1.5">
-              <label
-                htmlFor="inspector-node-content"
-                className="block text-[11px] font-bold text-slate-500 tracking-wide"
-              >
-                Treść
-              </label>
-              <textarea
-                id="inspector-node-content"
-                rows={2}
-                value={selectedNode.content || ''}
-                onChange={(e) => onUpdateNode('content', e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white resize-none"
-              />
-            </div>
-          )}
+          {!isMultiSelect &&
+            selectedNode &&
+            ['Heading', 'Text', 'Button', 'Badge'].includes(
+              selectedNode.type
+            ) && (
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="inspector-node-content"
+                  className="block text-[11px] font-bold text-slate-500 tracking-wide"
+                >
+                  Treść
+                </label>
+                <textarea
+                  id="inspector-node-content"
+                  rows={2}
+                  value={selectedNode.content || ''}
+                  onChange={(e) => onUpdateNode('content', e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white resize-none"
+                />
+              </div>
+            )}
 
-          {selectedNode.type === 'Input' && (
+          {!isMultiSelect && selectedNode?.type === 'Input' && (
             <div className="space-y-1.5">
               <label
                 htmlFor="inspector-node-placeholder"
@@ -1786,7 +2137,7 @@ export function InspectorPanel({
             </div>
           )}
 
-          {selectedNode.type === 'Image' && (
+          {!isMultiSelect && selectedNode?.type === 'Image' && (
             <div className="space-y-1.5">
               <label
                 htmlFor="inspector-node-src"
@@ -1804,35 +2155,52 @@ export function InspectorPanel({
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <label
-              htmlFor="inspector-node-classname"
-              className="block text-[11px] font-bold text-slate-500 tracking-wide"
-            >
-              Klasy Tailwind CSS
-            </label>
-            <textarea
-              id="inspector-node-classname"
-              value={selectedNode.props.className || ''}
-              onChange={(e) => onUpdateNode('className', e.target.value, true)}
-              className="w-full h-28 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white resize-none"
-              placeholder="np. p-4 bg-white rounded-xl shadow-sm..."
-            />
-          </div>
-
-          {selectedId !== 'root' && (
-            <div className="pt-4 border-t border-slate-100 mt-auto">
-              <button
-                type="button"
-                title="Usuń element (Delete)"
-                onClick={onDeleteNode}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+          {!isMultiSelect && selectedNode && (
+            <div className="space-y-1.5">
+              <label
+                htmlFor="inspector-node-classname"
+                className="block text-[11px] font-bold text-slate-500 tracking-wide"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                Usuń element
-              </button>
+                Klasy Tailwind CSS
+              </label>
+              <textarea
+                id="inspector-node-classname"
+                value={selectedNode.props.className || ''}
+                onChange={(e) => onUpdateNode('className', e.target.value, true)}
+                className="w-full h-28 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white resize-none"
+                placeholder="np. p-4 bg-white rounded-xl shadow-sm..."
+              />
             </div>
           )}
+
+          {isMultiSelect
+            ? activeIds.some((id) => id !== 'root') && (
+                <div className="pt-4 border-t border-slate-100 mt-auto">
+                  <button
+                    type="button"
+                    title="Usuń zaznaczone elementy (Delete)"
+                    onClick={onBulkDeleteNodes}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Usuń zaznaczone (
+                    {activeIds.filter((id) => id !== 'root').length})
+                  </button>
+                </div>
+              )
+            : selectedId !== 'root' && (
+                <div className="pt-4 border-t border-slate-100 mt-auto">
+                  <button
+                    type="button"
+                    title="Usuń element (Delete)"
+                    onClick={onDeleteNode}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Usuń element
+                  </button>
+                </div>
+              )}
         </div>
       ) : (
         <div className="p-6 text-center text-slate-500 text-xs mt-10">

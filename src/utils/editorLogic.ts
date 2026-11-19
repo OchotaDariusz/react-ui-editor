@@ -11,7 +11,10 @@ import type {
   NodeBlueprint,
   NodesMap,
   NodeType,
+  RecentComponentSearch,
   SeoMetadata,
+  ThemePreset,
+  ThemeVarCategory,
   ThemeVariable,
 } from '../types/editor';
 
@@ -1592,6 +1595,399 @@ export const filterComponentHistory = (
   if (filter === 'all') return entries;
   return entries.filter((entry) => entry.eventType === filter);
 };
+
+export const toggleMultiSelection = (
+  currentIds: string[],
+  clickedId: string,
+  additive: boolean,
+  validNodes?: NodesMap
+): string[] => {
+  if (validNodes && !validNodes[clickedId]) {
+    return ['root'];
+  }
+  if (!additive) {
+    return [clickedId];
+  }
+  if (clickedId === 'root') {
+    return ['root'];
+  }
+
+  const nonRoot = currentIds.filter(
+    (id) => id !== 'root' && (!validNodes || Boolean(validNodes[id]))
+  );
+  const exists = nonRoot.includes(clickedId);
+  const next = exists
+    ? nonRoot.filter((id) => id !== clickedId)
+    : [...nonRoot, clickedId];
+
+  return next.length > 0 ? next : ['root'];
+};
+
+export const applyBulkClassUpdaterToNodes = (
+  prev: NodesMap,
+  targetIds: string[],
+  updater: (currentClassName: string, node: EditorNode) => string
+): NodesMap => {
+  const uniqueIds = Array.from(new Set(targetIds)).filter((id) => Boolean(prev[id]));
+  if (uniqueIds.length === 0) return prev;
+
+  let changed = false;
+  const next: NodesMap = { ...prev };
+
+  for (const id of uniqueIds) {
+    const existing = next[id];
+    if (!existing) continue;
+    const prevClass = existing.props.className || '';
+    const updatedClass = updater(prevClass, existing);
+    if (updatedClass !== prevClass) {
+      next[id] = {
+        ...existing,
+        props: {
+          ...existing.props,
+          className: updatedClass,
+        },
+      };
+      changed = true;
+    }
+  }
+
+  return changed ? next : prev;
+};
+
+export const appendBulkCustomClassesToNodes = (
+  prev: NodesMap,
+  targetIds: string[],
+  rawExtraClasses: string
+): NodesMap => {
+  const extraTokens = rawExtraClasses.split(/\s+/).filter(Boolean);
+  if (extraTokens.length === 0) return prev;
+
+  return applyBulkClassUpdaterToNodes(prev, targetIds, (currClass) => {
+    const existingTokens = currClass.split(/\s+/).filter(Boolean);
+    const merged = [...existingTokens];
+    for (const token of extraTokens) {
+      if (!merged.includes(token)) {
+        merged.push(token);
+      }
+    }
+    return merged.join(' ');
+  });
+};
+
+export const deleteNodesFromTree = (
+  prev: NodesMap,
+  targetIds: string[]
+): { nodes: NodesMap; nextSelectedId: string } => {
+  const deletableIds = Array.from(new Set(targetIds)).filter(
+    (id) => id !== 'root' && Boolean(prev[id])
+  );
+  if (deletableIds.length === 0) {
+    return { nodes: prev, nextSelectedId: 'root' };
+  }
+
+  let nextNodes = prev;
+  for (const id of deletableIds) {
+    if (nextNodes[id]) {
+      nextNodes = deleteNodeFromTree(nextNodes, id).nodes;
+    }
+  }
+
+  return { nodes: nextNodes, nextSelectedId: 'root' };
+};
+
+export const getSharedSpacingValueAcrossNodes = (
+  nodes: NodesMap,
+  targetIds: string[],
+  prefix: SpacingPrefix
+): string => {
+  const validNodes = targetIds.map((id) => nodes[id]).filter(Boolean);
+  if (validNodes.length === 0) return '';
+  const first = getTailwindSpacingValue(validNodes[0].props.className || '', prefix);
+  return validNodes.every(
+    (n) => getTailwindSpacingValue(n.props.className || '', prefix) === first
+  )
+    ? first
+    : '';
+};
+
+export const getSharedGroupTokenAcrossNodes = (
+  nodes: NodesMap,
+  targetIds: string[],
+  groupClasses: readonly string[]
+): string => {
+  const validNodes = targetIds.map((id) => nodes[id]).filter(Boolean);
+  if (validNodes.length === 0) return '';
+  const first = getTailwindGroupToken(
+    validNodes[0].props.className || '',
+    groupClasses
+  );
+  return validNodes.every(
+    (n) => getTailwindGroupToken(n.props.className || '', groupClasses) === first
+  )
+    ? first
+    : '';
+};
+
+export const getSharedTextColorAcrossNodes = (
+  nodes: NodesMap,
+  targetIds: string[]
+): string => {
+  const validNodes = targetIds.map((id) => nodes[id]).filter(Boolean);
+  if (validNodes.length === 0) return '';
+  const first = getTailwindTextColor(validNodes[0].props.className || '');
+  return validNodes.every(
+    (n) => getTailwindTextColor(n.props.className || '') === first
+  )
+    ? first
+    : '';
+};
+
+export const recordRecentComponentSearch = (
+  current: RecentComponentSearch[],
+  entry: Omit<RecentComponentSearch, 'timestamp'>,
+  maxItems = 5,
+  timestamp: number = Date.now()
+): RecentComponentSearch[] => {
+  const cleanQuery = entry.query.trim();
+  if (!cleanQuery) return current;
+
+  const filtered = current.filter((item) => item.type !== entry.type);
+  return [
+    {
+      type: entry.type,
+      label: entry.label,
+      query: cleanQuery,
+      timestamp,
+    },
+    ...filtered,
+  ].slice(0, maxItems);
+};
+
+const COLOR_VALUE_RE =
+  /^(?:#[0-9a-fA-F]{3,8}|(?:rgb|rgba|hsl|hsla|oklch|oklab|color)\([^)]+\))$/;
+
+export const inferThemeVarCategory = (
+  name: string,
+  value: string,
+  explicitCategory?: string
+): ThemeVarCategory => {
+  if (explicitCategory === 'color' || explicitCategory === 'fontSize') {
+    return explicitCategory;
+  }
+  const lowerName = name.toLowerCase();
+  const trimmedVal = value.trim();
+
+  if (
+    lowerName.includes('font') ||
+    lowerName.includes('size') ||
+    lowerName.includes('text-')
+  ) {
+    return 'fontSize';
+  }
+  if (COLOR_VALUE_RE.test(trimmedVal)) {
+    return 'color';
+  }
+  if (
+    lowerName.includes('color') ||
+    lowerName.includes('surface') ||
+    lowerName.includes('primary') ||
+    lowerName.includes('secondary') ||
+    lowerName.includes('accent') ||
+    lowerName.includes('outline') ||
+    lowerName.includes('border') ||
+    lowerName.includes('bg')
+  ) {
+    return 'color';
+  }
+  if (/^\d+(?:\.\d+)?(?:rem|em|px|ch|vw|vh|%)$/.test(trimmedVal)) {
+    return 'fontSize';
+  }
+  return 'color';
+};
+
+const camelToKebab = (key: string): string =>
+  key.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+
+const makeReadableLabel = (cssVarName: string): string =>
+  cssVarName
+    .replace(/^--/, '')
+    .replace(/^(color|font-size|md-sys-color)-/, '')
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || cssVarName;
+
+export const parseImportedTheme = (
+  rawText: string,
+  idFactory: () => string = generateId
+): { ok: true; variables: ThemeVariable[] } | { ok: false; error: string } => {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    return { ok: false, error: 'Wklej zawartość JSON lub CSS zmiennych :root.' };
+  }
+
+  const normalizedMap = new Map<string, ThemeVariable>();
+
+  const upsertVar = (
+    rawName: string,
+    rawValue: string,
+    explicitLabel?: string,
+    explicitCategory?: string
+  ) => {
+    const cleanName = normalizeCssVarName(camelToKebab(rawName));
+    const cleanValue = rawValue.replace(/[;{}<>]/g, '').trim();
+    if (!cleanName || !cleanValue) return;
+    const category = inferThemeVarCategory(
+      cleanName,
+      cleanValue,
+      explicitCategory
+    );
+    normalizedMap.set(cleanName, {
+      id: idFactory(),
+      name: cleanName,
+      label: explicitLabel?.trim() || makeReadableLabel(cleanName),
+      value: cleanValue,
+      category,
+    });
+  };
+
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return { ok: false, error: 'Nieprawidłowy format JSON motywu.' };
+    }
+
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) {
+        if (!item || typeof item !== 'object') continue;
+        const rec = item as Record<string, unknown>;
+        if (typeof rec.name === 'string' && typeof rec.value === 'string') {
+          upsertVar(
+            rec.name,
+            rec.value,
+            typeof rec.label === 'string' ? rec.label : undefined,
+            typeof rec.category === 'string' ? rec.category : undefined
+          );
+        }
+      }
+    } else if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+
+      // Material Theme Builder JSON support: { schemes: { light: { primary: "#6750A4", ... } } }
+      const schemes = obj.schemes as Record<string, unknown> | undefined;
+      if (schemes && typeof schemes === 'object') {
+        const lightScheme =
+          (schemes.light as Record<string, unknown> | undefined) ||
+          (schemes.dark as Record<string, unknown> | undefined);
+        if (lightScheme && typeof lightScheme === 'object') {
+          for (const [k, v] of Object.entries(lightScheme)) {
+            if (typeof v === 'string') {
+              upsertVar(`color-${k}`, v, undefined, 'color');
+            }
+          }
+        }
+      }
+
+      // Structured `{ variables: [...] }`
+      if (Array.isArray(obj.variables)) {
+        for (const item of obj.variables) {
+          if (!item || typeof item !== 'object') continue;
+          const rec = item as Record<string, unknown>;
+          if (typeof rec.name === 'string' && typeof rec.value === 'string') {
+            upsertVar(
+              rec.name,
+              rec.value,
+              typeof rec.label === 'string' ? rec.label : undefined,
+              typeof rec.category === 'string' ? rec.category : undefined
+            );
+          }
+        }
+      }
+
+      // Nested `{ colors: { ... }, fontSizes: { ... } }` or `{ tokens: { ... } }`
+      const nestedBuckets: Array<{
+        bucket: unknown;
+        cat?: ThemeVarCategory;
+        prefix: string;
+      }> = [
+        { bucket: obj.colors, cat: 'color', prefix: 'color-' },
+        { bucket: obj.fontSizes, cat: 'fontSize', prefix: 'font-size-' },
+        { bucket: obj.tokens, prefix: '' },
+      ];
+      for (const { bucket, cat, prefix } of nestedBuckets) {
+        if (bucket && typeof bucket === 'object' && !Array.isArray(bucket)) {
+          for (const [k, v] of Object.entries(bucket as Record<string, unknown>)) {
+            if (typeof v === 'string') {
+              const keyWithPrefix = k.startsWith('--') ? k : `${prefix}${k}`;
+              upsertVar(keyWithPrefix, v, undefined, cat);
+            }
+          }
+        }
+      }
+
+      // Flat token map `{ "--color-primary": "#6750A4", ... }`
+      for (const [k, v] of Object.entries(obj)) {
+        if (typeof v === 'string' && k !== 'name' && k !== 'description' && k !== 'id') {
+          upsertVar(k, v);
+        }
+      }
+    }
+  } else {
+    // Parse CSS variables (`--name: value;`)
+    const strippedComments = trimmed.replace(/\/\*[\s\S]*?\*\//g, '');
+    const cssVarRe = /(--[a-zA-Z0-9_-]+)\s*:\s*([^;}\n]+)/g;
+    let match: RegExpExecArray | null;
+    while ((match = cssVarRe.exec(strippedComments)) !== null) {
+      upsertVar(match[1], match[2]);
+    }
+  }
+
+  const variables = Array.from(normalizedMap.values());
+  if (variables.length === 0) {
+    return {
+      ok: false,
+      error:
+        'Nie znaleziono zmiennych motywu. Użyj formatu JSON lub CSS (--zmienna: wartość;).',
+    };
+  }
+
+  return { ok: true, variables };
+};
+
+export const serializeThemeVariablesToJson = (
+  themeVars: ThemeVariable[]
+): string =>
+  JSON.stringify(
+    themeVars.map(({ name, label, value, category }) => ({
+      name,
+      label,
+      value,
+      category,
+    })),
+    null,
+    2
+  );
+
+export const detectMatchingThemePresetId = (
+  themeVars: ThemeVariable[],
+  presets: ThemePreset[]
+): string | null => {
+  const currentMap = new Map(
+    themeVars.map((v) => [v.name, v.value.trim().toLowerCase()])
+  );
+
+  for (const preset of presets) {
+    if (preset.variables.length !== themeVars.length) continue;
+    const allMatch = preset.variables.every(
+      (pv) => currentMap.get(pv.name) === pv.value.trim().toLowerCase()
+    );
+    if (allMatch) return preset.id;
+  }
+  return null;
+};
+
 
 
 

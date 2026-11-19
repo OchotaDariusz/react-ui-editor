@@ -68,6 +68,13 @@ export interface ComponentHistoryEntry {
   snapshot: NodeBlueprint;
 }
 
+export interface RecentComponentSearch {
+  type: NodeType | 'CardPreset';
+  label: string;
+  query: string;
+  timestamp: number;
+}
+
 export type ThemeVarCategory = 'color' | 'fontSize';
 
 export interface ThemeVariable {
@@ -82,6 +89,15 @@ export interface SeoMetadata {
   title: string;
   description: string;
   canonicalUrl: string;
+}
+
+export type ExportFormat = 'react' | 'html' | 'svg' | 'pdf';
+
+export interface ThemePreset {
+  id: string;
+  name: string;
+  description: string;
+  variables: ThemeVariable[];
 }
 
 export const DND_ITEM_TYPE = 'CANVAS_NODE' as const;
