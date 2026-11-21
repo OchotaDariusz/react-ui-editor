@@ -87,6 +87,7 @@ interface LeftSidebarProps {
   selectedId: string;
   selectedIds: string[];
   onSelectNode: (id: string, additive?: boolean) => void;
+  onToggleNodeVisibility: (id: string) => void;
 }
 
 const BASIC_COMPONENTS: Array<{
@@ -361,6 +362,7 @@ export function LeftSidebar({
   selectedId,
   selectedIds,
   onSelectNode,
+  onToggleNodeVisibility,
 }: LeftSidebarProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [iconQuery, setIconQuery] = useState('');
@@ -1169,6 +1171,7 @@ export function LeftSidebar({
             selectedId={selectedId}
             selectedIds={selectedIds}
             onSelect={onSelectNode}
+            onToggleVisibility={onToggleNodeVisibility}
           />
         </div>
       )}

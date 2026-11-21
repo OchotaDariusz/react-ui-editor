@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import type { NodesMap } from '../types/editor';
+import { isNodeHiddenInTree } from '../utils/editorLogic';
 
 interface LayerTreeItemProps {
   id: string;
@@ -9,6 +10,7 @@ interface LayerTreeItemProps {
   selectedIds: string[];
   depth?: number;
   onSelect: (id: string, additive?: boolean) => void;
+  onToggleVisibility: (id: string) => void;
 }
 
 export const LayerTreeItem = memo(function LayerTreeItem({
@@ -18,6 +20,7 @@ export const LayerTreeItem = memo(function LayerTreeItem({
   selectedIds,
   depth = 0,
   onSelect,
+  onToggleVisibility,
 }: LayerTreeItemProps) {
   const [expanded, setExpanded] = useState(true);
   const node = nodes[id];
@@ -25,6 +28,10 @@ export const LayerTreeItem = memo(function LayerTreeItem({
 
   const hasChildren = Boolean(node.children && node.children.length > 0);
   const isSelected = selectedId === id || selectedIds.includes(id);
+  const isRoot = id === 'root';
+  const isSelfHidden = Boolean(node.hidden);
+  const isEffectivelyHidden = !isRoot && isNodeHiddenInTree(nodes, id);
+  const isInheritedHidden = isEffectivelyHidden && !isSelfHidden;
   const label = node.name.trim() || node.type;
   const metaParts: string[] = [node.type];
   if (node.variant) {
@@ -39,7 +46,8 @@ export const LayerTreeItem = memo(function LayerTreeItem({
     <div>
       <div
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
-        className={`flex items-center gap-1 py-1 pr-2 rounded-md text-xs transition-colors ${
+        data-layer-hidden={isEffectivelyHidden ? 'true' : undefined}
+        className={`flex items-center gap-1 py-1 pr-1.5 rounded-md text-xs transition-colors ${
           isSelected
             ? 'bg-blue-50 text-blue-700 font-semibold'
             : 'text-slate-700 hover:bg-slate-100'
@@ -66,13 +74,50 @@ export const LayerTreeItem = memo(function LayerTreeItem({
         <button
           type="button"
           onClick={(e) => onSelect(id, e.shiftKey || e.ctrlKey || e.metaKey)}
-          className="flex-1 min-w-0 flex items-center justify-between gap-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+          className={`flex-1 min-w-0 flex items-center justify-between gap-2 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded ${
+            isEffectivelyHidden ? 'opacity-50' : ''
+          }`}
         >
-          <span className="truncate">{label}</span>
+          <span className={`truncate ${isEffectivelyHidden ? 'line-through' : ''}`}>
+            {label}
+          </span>
           <span className="text-[10px] text-slate-400 font-mono tabular-nums shrink-0">
             {metadata}
           </span>
         </button>
+
+        {!isRoot && (
+          <button
+            type="button"
+            data-testid={`layer-visibility-toggle-${id}`}
+            aria-label={isSelfHidden ? `Pokaż ${label}` : `Ukryj ${label}`}
+            aria-pressed={isSelfHidden}
+            title={
+              isSelfHidden
+                ? 'Pokaż element na płótnie'
+                : isInheritedHidden
+                  ? 'Ukryto przez element nadrzędny'
+                  : 'Ukryj element na płótnie'
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleVisibility(id);
+            }}
+            className={`p-1 rounded shrink-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+              isSelfHidden
+                ? 'text-amber-600 bg-amber-50 hover:bg-amber-100'
+                : isInheritedHidden
+                  ? 'text-slate-400 opacity-60 hover:opacity-100 hover:bg-slate-200'
+                  : 'text-slate-400 hover:text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            {isEffectivelyHidden ? (
+              <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+            ) : (
+              <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+            )}
+          </button>
+        )}
       </div>
 
       {hasChildren && expanded && (
@@ -86,6 +131,7 @@ export const LayerTreeItem = memo(function LayerTreeItem({
               selectedIds={selectedIds}
               depth={depth + 1}
               onSelect={onSelect}
+              onToggleVisibility={onToggleVisibility}
             />
           ))}
         </div>

@@ -2037,6 +2037,210 @@ test('duplicateNodeInTree appends incrementing Copy 1 / Copy 2 suffixes and avoi
   assert.deepEqual(droppedCard.nodes.root.children, [droppedCard.createdId, droppedBtn.createdId]);
 });
 
+test('generateReactJSX supports pretty and minified formats with SEO and icons', async () => {
+  const { addIconNodeToTree, generateReactJSX } = await import('./editorLogic.ts');
 
+  const withIcon = addIconNodeToTree(INITIAL_NODES, 'hero-1', 'Rocket', () => 'icon_1');
+  const seo = {
+    title: 'Landing Page',
+    description: 'Fast builder',
+    canonicalUrl: 'https://example.com',
+  };
 
+  const pretty = generateReactJSX(withIcon.nodes, seo, 'pretty');
+  const minified = generateReactJSX(withIcon.nodes, seo, 'minified');
 
+  assert.ok(pretty.includes('\n'));
+  assert.ok(pretty.includes("import { Rocket } from 'lucide-react';"));
+  assert.ok(pretty.includes('<title>Landing Page</title>'));
+
+  assert.equal(minified.includes('\n'), false);
+  assert.ok(minified.startsWith("import React from'react';import{Rocket}from'lucide-react';export default function GeneratedUI(){return(<>"));
+  assert.ok(minified.includes('<title>Landing Page</title>'));
+  assert.ok(minified.includes('<Rocket className='));
+  assert.ok(minified.endsWith('</>);}'));
+
+  const minifiedNoSeo = generateReactJSX(INITIAL_NODES, undefined, 'minified');
+  assert.equal(minifiedNoSeo.includes('\n'), false);
+  assert.ok(minifiedNoSeo.startsWith("import React from'react';export default function GeneratedUI(){return(<div"));
+});
+
+test('toggleNodeVisibilityInTree and isNodeHiddenInTree hide a node and all its descendants without deleting', async () => {
+  const { isNodeHiddenInTree, toggleNodeVisibilityInTree } = await import('./editorLogic.ts');
+
+  assert.equal(isNodeHiddenInTree(INITIAL_NODES, 'hero-1'), false);
+  assert.equal(isNodeHiddenInTree(INITIAL_NODES, 'heading-1'), false);
+
+  // Root cannot be hidden
+  const rootAttempt = toggleNodeVisibilityInTree(INITIAL_NODES, 'root');
+  assert.equal(rootAttempt, INITIAL_NODES);
+
+  // Hide hero-1 -> hero-1 and all its descendants become effectively hidden, but remain in tree
+  const hiddenHero = toggleNodeVisibilityInTree(INITIAL_NODES, 'hero-1');
+  assert.equal(hiddenHero['hero-1'].hidden, true);
+  assert.equal(isNodeHiddenInTree(hiddenHero, 'hero-1'), true);
+  assert.equal(isNodeHiddenInTree(hiddenHero, 'badge-1'), true);
+  assert.equal(isNodeHiddenInTree(hiddenHero, 'heading-1'), true);
+  assert.equal(isNodeHiddenInTree(hiddenHero, 'btn-1'), true);
+  assert.equal(isNodeHiddenInTree(hiddenHero, 'root'), false);
+  assert.ok(hiddenHero['hero-1'].children.includes('heading-1'));
+
+  // Unhide hero-1 -> node and descendants become visible again
+  const restoredHero = toggleNodeVisibilityInTree(hiddenHero, 'hero-1');
+  assert.equal(restoredHero['hero-1'].hidden, undefined);
+  assert.equal(isNodeHiddenInTree(restoredHero, 'hero-1'), false);
+  assert.equal(isNodeHiddenInTree(restoredHero, 'heading-1'), false);
+});
+
+test('autoSave controller persists tree state on 5000ms intervals and flush()', async () => {
+  const {
+    AUTO_SAVE_INTERVAL_MS,
+    createAutoSaveController,
+    persistTreeState,
+  } = await import('./autoSave.ts');
+
+  assert.equal(AUTO_SAVE_INTERVAL_MS, 5000);
+
+  const memStore = new Map<string, string>();
+  const mockStorage = {
+    getItem: (key: string) => memStore.get(key) ?? null,
+    setItem: (key: string, val: string) => {
+      memStore.set(key, val);
+    },
+  };
+
+  let currentNodes = INITIAL_NODES;
+  let scheduledCallback: (() => void) | null = null;
+  let clearedId: number | null = null;
+
+  const controller = createAutoSaveController({
+    getNodes: () => currentNodes,
+    storage: mockStorage,
+    storageKey: 'test_tree_key',
+    setIntervalFn: (fn, ms) => {
+      assert.equal(ms, 5000);
+      scheduledCallback = fn;
+      return 42;
+    },
+    clearIntervalFn: (id) => {
+      clearedId = id;
+    },
+  });
+
+  controller.start();
+  if (!scheduledCallback) {
+    assert.fail('Expected interval callback to be registered');
+  }
+  assert.equal(memStore.get('test_tree_key'), undefined);
+
+  // Trigger 5-second interval tick
+  (scheduledCallback as () => void)();
+  const saved1 = JSON.parse(memStore.get('test_tree_key') || '{}');
+  assert.equal(saved1.root?.name, 'Root Canvas');
+
+  // Modify state and flush immediately (simulating beforeunload / tab close)
+  currentNodes = {
+    ...INITIAL_NODES,
+    root: { ...INITIAL_NODES.root, name: 'Updated Before Unload' },
+  };
+  assert.equal(controller.flush(), true);
+  const saved2 = JSON.parse(memStore.get('test_tree_key') || '{}');
+  assert.equal(saved2.root?.name, 'Updated Before Unload');
+
+  controller.stop();
+  assert.equal(clearedId, 42);
+
+  // Error resilience if storage throws quota error
+  const failingStorage = {
+    getItem: () => null,
+    setItem: () => {
+      throw new Error('QuotaExceededError');
+    },
+  };
+  assert.equal(persistTreeState(failingStorage, 'k', INITIAL_NODES), null);
+});
+
+test('responsivePreview calculates column counts, clamped scales, and valid CSS rules', async () => {
+  const {
+    RESPONSIVE_PREVIEW_VIEWPORTS,
+    buildResponsivePreviewCss,
+    computeViewportFrameScale,
+    getResponsivePreviewColumns,
+  } = await import('./responsivePreview.ts');
+
+  assert.deepEqual(
+    RESPONSIVE_PREVIEW_VIEWPORTS.map((v) => v.id),
+    ['mobile', 'tablet', 'desktop']
+  );
+
+  assert.equal(getResponsivePreviewColumns(1200), 3);
+  assert.equal(getResponsivePreviewColumns(710), 3);
+  assert.equal(getResponsivePreviewColumns(540), 2);
+  assert.equal(getResponsivePreviewColumns(380), 1);
+
+  assert.equal(computeViewportFrameScale(500, 375), 1);
+  assert.equal(computeViewportFrameScale(384, 768), 0.5);
+  assert.equal(computeViewportFrameScale(50, 1024), 0.2);
+
+  const css = buildResponsivePreviewCss([
+    { id: 'mobile', widthPx: 375, scale: 1, contentHeightPx: 500 },
+    { id: 'tablet', widthPx: 768, scale: 0.5, contentHeightPx: 600 },
+  ]);
+  assert.ok(css.includes('.rp-wrap-mobile { width: 375px; height: 500px; }'));
+  assert.ok(css.includes('.rp-frame-tablet { width: 768px; transform: scale(0.5); transform-origin: top left; }'));
+});
+
+test('themePalette sanitizes hex/token names and merges generated colors while preserving fontSize variables', async () => {
+  const { DEFAULT_THEME_VARS } = await import('../constants/editorDefaults.ts');
+  const {
+    mergeGeneratedPaletteIntoThemeVars,
+    normalizeHexColor,
+    normalizeThemeColorVarName,
+    sanitizeGeneratedColors,
+  } = await import('./themePalette.ts');
+
+  assert.equal(normalizeHexColor('#Ab3'), '#aabb33');
+  assert.equal(normalizeHexColor('#D97706'), '#d97706');
+  assert.equal(normalizeHexColor('rgb(0,0,0)'), null);
+  assert.equal(normalizeThemeColorVarName('var(color-primary)'), '--color-primary');
+  assert.equal(normalizeThemeColorVarName(' Accent Glow! '), '--accent-glow');
+
+  const sanitized = sanitizeGeneratedColors([
+    { name: '--color-primary', label: 'Primary', value: '#D97706' },
+    { name: 'var(--color-primary)', label: 'Dup', value: '#000000' },
+    { name: '--color-surface', label: 'Surface', value: '#FFFBEB' },
+    { name: '--bad-color', label: 'Bad', value: 'not-hex' },
+    { name: 'color-accent', label: 'Accent', value: '#92400e' },
+  ]);
+
+  assert.equal(sanitized.length, 3);
+  assert.deepEqual(
+    sanitized.map((c) => [c.name, c.value]),
+    [
+      ['--color-primary', '#d97706'],
+      ['--color-surface', '#fffbeb'],
+      ['--color-accent', '#92400e'],
+    ]
+  );
+
+  let seq = 0;
+  const merged = mergeGeneratedPaletteIntoThemeVars(
+    DEFAULT_THEME_VARS,
+    sanitized,
+    () => `gen_${++seq}`
+  );
+
+  const primary = merged.find((v) => v.name === '--color-primary');
+  const secondary = merged.find((v) => v.name === '--color-secondary');
+  const surface = merged.find((v) => v.name === '--color-surface');
+  const fontSize = merged.find((v) => v.category === 'fontSize');
+  const accent = merged.find((v) => v.name === '--color-accent');
+
+  assert.equal(primary?.value, '#d97706');
+  assert.equal(secondary?.value, DEFAULT_THEME_VARS.find((v) => v.name === '--color-secondary')?.value);
+  assert.equal(surface?.value, '#fffbeb');
+  assert.equal(fontSize?.value, DEFAULT_THEME_VARS.find((v) => v.category === 'fontSize')?.value);
+  assert.equal(accent?.id, 'gen_1');
+  assert.equal(accent?.category, 'color');
+  assert.equal(accent?.value, '#92400e');
+});

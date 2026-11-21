@@ -23,6 +23,7 @@ export interface EditorNode {
   name: string;
   variant?: string;
   content?: string;
+  hidden?: boolean;
   parentId: string | null;
   props: NodeProps;
   themeOverrides?: Record<string, string>;
@@ -64,6 +65,7 @@ export interface NodeBlueprint {
   name: string;
   variant?: string;
   content?: string;
+  hidden?: boolean;
   props: NodeProps;
   themeOverrides?: Record<string, string>;
   children?: NodeBlueprint[];
@@ -121,6 +123,8 @@ export interface SeoMetadata {
 export type SeoPreviewDeviceMode = 'desktop' | 'mobile';
 
 export type ExportFormat = 'react' | 'html' | 'svg' | 'pdf';
+
+export type JsxCodeFormatMode = 'pretty' | 'minified';
 
 export type InspectorTab = 'properties' | 'grid-layout' | 'devtools' | 'shortcuts';
 

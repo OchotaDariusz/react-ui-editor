@@ -10,6 +10,7 @@ import type {
   ComponentHistoryEventType,
   EditorNode,
   ImportedAsset,
+  JsxCodeFormatMode,
   KeyboardShortcutItem,
   NodeBlueprint,
   NodesMap,
@@ -544,6 +545,45 @@ export const deleteNodeFromTree = (
   return { nodes: next, nextSelectedId: 'root' };
 };
 
+export const isNodeHiddenInTree = (
+  nodes: NodesMap,
+  nodeId: string
+): boolean => {
+  let curr: string | null | undefined = nodeId;
+  const visited = new Set<string>();
+  while (curr) {
+    if (visited.has(curr)) break;
+    visited.add(curr);
+    const node: EditorNode | undefined = nodes[curr];
+    if (!node) break;
+    if (node.hidden) return true;
+    curr = node.parentId;
+  }
+  return false;
+};
+
+export const toggleNodeVisibilityInTree = (
+  prev: NodesMap,
+  nodeId: string
+): NodesMap => {
+  if (nodeId === 'root') return prev;
+  const target = prev[nodeId];
+  if (!target) return prev;
+
+  const nextHidden = !Boolean(target.hidden);
+  const nextNode: EditorNode = { ...target };
+  if (nextHidden) {
+    nextNode.hidden = true;
+  } else {
+    delete nextNode.hidden;
+  }
+
+  return {
+    ...prev,
+    [nodeId]: nextNode,
+  };
+};
+
 const escapeAttr = (value: string): string => value.replace(/"/g, '&quot;');
 
 const buildNodeJSX = (
@@ -612,20 +652,98 @@ const collectUsedIconNames = (nodes: NodesMap): string[] => {
 const escapeHtmlText = (value: string): string =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+const buildNodeJSXMinified = (nodes: NodesMap, id: string): string => {
+  const node = nodes[id];
+  if (!node) return '';
+  const props = node.props || {};
+  const cleanClass = (props.className || '').replace(/\s+/g, ' ').trim();
+  let propsStr = cleanClass ? ` className="${escapeAttr(cleanClass)}"` : '';
+
+  if (node.type === 'Input' && props.placeholder) {
+    propsStr += ` placeholder="${escapeAttr(props.placeholder)}"`;
+  }
+  if (node.type === 'Image' && props.src) {
+    propsStr += ` src="${escapeAttr(props.src)}" alt="${escapeAttr(
+      node.name || 'image'
+    )}"`;
+  }
+
+  if (isContainerNodeType(node.type)) {
+    if (node.children.length === 0) return `<div${propsStr}/>`;
+    const inner = node.children
+      .map((cId) => buildNodeJSXMinified(nodes, cId))
+      .join('');
+    return `<div${propsStr}>${inner}</div>`;
+  }
+  if (node.type === 'Heading') {
+    return `<h2${propsStr}>${node.content || ''}</h2>`;
+  }
+  if (node.type === 'Text') {
+    return `<p${propsStr}>${node.content || ''}</p>`;
+  }
+  if (node.type === 'Badge') {
+    return `<span${propsStr}>${node.content || ''}</span>`;
+  }
+  if (node.type === 'Button') {
+    return `<button type="button"${propsStr}>${node.content || ''}</button>`;
+  }
+  if (node.type === 'Input') {
+    return `<input${propsStr}/>`;
+  }
+  if (node.type === 'Image') {
+    return `<img${propsStr}/>`;
+  }
+  if (node.type === 'Icon') {
+    const iconTag =
+      (props.iconName || 'Star').replace(/[^A-Za-z0-9_]/g, '') || 'Star';
+    return `<${iconTag}${propsStr}/>`;
+  }
+  return '';
+};
+
 export const generateReactJSX = (
   nodes: NodesMap,
-  seo?: SeoMetadata
+  seo?: SeoMetadata,
+  formatMode: JsxCodeFormatMode = 'pretty'
 ): string => {
   const iconNames = collectUsedIconNames(nodes);
+  const cleanTitle = seo?.title?.trim();
+  const cleanDesc = seo?.description?.trim();
+  const cleanCanonical = seo?.canonicalUrl?.trim();
+
+  if (formatMode === 'minified') {
+    const iconImportMin =
+      iconNames.length > 0
+        ? `import{${iconNames.join(',')}}from'lucide-react';`
+        : '';
+    const seoMinParts: string[] = [];
+    if (cleanTitle) {
+      seoMinParts.push(`<title>${escapeHtmlText(cleanTitle)}</title>`);
+    }
+    if (cleanDesc) {
+      seoMinParts.push(
+        `<meta name="description" content="${escapeAttr(cleanDesc)}"/>`
+      );
+    }
+    if (cleanCanonical) {
+      seoMinParts.push(
+        `<link rel="canonical" href="${escapeAttr(cleanCanonical)}"/>`
+      );
+    }
+    const rootMarkupMin = buildNodeJSXMinified(nodes, 'root');
+    const bodyMin =
+      seoMinParts.length > 0
+        ? `<>${seoMinParts.join('')}${rootMarkupMin}</>`
+        : rootMarkupMin;
+    return `import React from'react';${iconImportMin}export default function GeneratedUI(){return(${bodyMin});}`;
+  }
+
   const iconImport =
     iconNames.length > 0
       ? `import { ${iconNames.join(', ')} } from 'lucide-react';\n`
       : '';
 
   const seoLines: string[] = [];
-  const cleanTitle = seo?.title?.trim();
-  const cleanDesc = seo?.description?.trim();
-  const cleanCanonical = seo?.canonicalUrl?.trim();
 
   if (cleanTitle) {
     seoLines.push(`      <title>${escapeHtmlText(cleanTitle)}</title>`);

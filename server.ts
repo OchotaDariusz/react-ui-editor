@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type } from '@google/genai';
+import { sanitizeGeneratedColors } from './src/utils/themePalette.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +34,19 @@ interface SmartLayoutSuggestion {
   description: string;
   classes: string;
   patternType: string;
+}
+
+interface ThemePaletteVariableInput {
+  name?: string;
+  label?: string;
+  value?: string;
+  category?: string;
+}
+
+interface ThemePaletteRequestBody {
+  prompt?: string;
+  baseColor?: string;
+  currentVariables?: ThemePaletteVariableInput[];
 }
 
 function getGeminiClient(): GoogleGenAI | null {
@@ -111,7 +125,7 @@ async function startServer() {
         contents: promptText,
         config: {
           systemInstruction:
-            'You are a senior Tailwind CSS layout architect inside a visual React UI editor. Given a selected container node and its direct children, propose 3 to 4 practical Tailwind CSS v4 layout class combinations for patterns such as "Centered card", "Sidebar-content layout", "Responsive feature grid", "Toolbar / header row", or "Hero stack". Keep every `classes` string strictly valid single-line Tailwind CSS utility classes (flex/grid, gap, items, justify, padding, max-w, rounded, border, shadow where helpful). Write concise, clear pattern names and helpful Polish or clear UI descriptions.',
+            'You are a senior Tailwind CSS layout architect inside a visual React UI editor. Given a selected container node and its direct children, propose 3 to 4 practical Tailwind CSS v4 layout and auto-alignment class combinations for patterns such as "Centered card", "Sidebar-content layout", "Responsive feature grid", "Toolbar / header row", "Auto-align items-center", or "Justify-between distribution" based on the child structure and user hierarchy prompt. Keep every `classes` string strictly valid single-line Tailwind CSS utility classes (flex/grid, gap, items-*, justify-*, padding, max-w, rounded, border, shadow where helpful). Write concise, clear pattern names and helpful Polish or clear UI descriptions.',
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.ARRAY,
@@ -184,6 +198,151 @@ async function startServer() {
           : 500;
       res.status(status >= 400 && status < 600 ? status : 500).json({
         error: `Nie udało się wygenerować sugestii Smart Layout: ${message}`,
+      });
+    }
+  });
+
+  app.post('/api/ai/theme-palette', async (req, res) => {
+    const body = (req.body || {}) as ThemePaletteRequestBody;
+    const stylePrompt =
+      typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    const baseColor =
+      typeof body.baseColor === 'string' ? body.baseColor.trim() : '';
+
+    if (!stylePrompt && !baseColor) {
+      res.status(400).json({
+        error: 'Podaj opis stylu (np. "warm autumn") lub wybierz kolor bazowy.',
+      });
+      return;
+    }
+
+    const ai = getGeminiClient();
+    if (!ai) {
+      res.status(503).json({
+        error:
+          'Brak klucza GEMINI_API_KEY po stronie serwera. Skonfiguruj go w panelu Settings > Secrets.',
+      });
+      return;
+    }
+
+    const existingColorVars = Array.isArray(body.currentVariables)
+      ? body.currentVariables
+          .filter(
+            (v) =>
+              v &&
+              v.category === 'color' &&
+              typeof v.name === 'string' &&
+              v.name.trim().startsWith('--')
+          )
+          .slice(0, 12)
+      : [];
+
+    const existingVarsSummary =
+      existingColorVars.length > 0
+        ? existingColorVars
+            .map(
+              (v) =>
+                `${v.name} (label="${v.label || ''}", current="${v.value || ''}")`
+            )
+            .join('\n')
+        : '--color-primary\n--color-secondary\n--color-surface';
+
+    const userSpec = [
+      stylePrompt ? `Style / mood descriptor: "${stylePrompt}"` : '',
+      baseColor ? `Anchor base hex color: "${baseColor}"` : '',
+      `Existing global CSS color variables to update cohesively:\n${existingVarsSummary}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: userSpec,
+        config: {
+          systemInstruction:
+            'You are a senior UI color-system designer. Generate a cohesive, high-contrast, accessible 6-digit hex color palette (#RRGGBB) for a web application design system. Always include updated values for every existing CSS color variable provided in the prompt (keeping their exact `--` variable names), and optionally add 1-2 complementary tokens like `--color-accent` or `--color-on-surface` when useful. Ensure `--color-surface` and `--color-primary` / `--color-secondary` have harmonious visual balance and readable contrast.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              paletteName: {
+                type: Type.STRING,
+                description: 'Short evocative palette title, e.g. "Warm Autumn Amber".',
+              },
+              rationale: {
+                type: Type.STRING,
+                description: 'One concise sentence explaining the color harmony.',
+              },
+              colors: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: {
+                      type: Type.STRING,
+                      description: 'CSS variable name starting with --, e.g. --color-primary.',
+                    },
+                    label: {
+                      type: Type.STRING,
+                      description: 'Human-readable token label, e.g. Primary.',
+                    },
+                    value: {
+                      type: Type.STRING,
+                      description: '6-digit hex color string like #d97706.',
+                    },
+                  },
+                  required: ['name', 'label', 'value'],
+                },
+              },
+            },
+            required: ['paletteName', 'rationale', 'colors'],
+          },
+        },
+      });
+
+      const rawJson = (response.text ?? '{}').trim();
+      const parsed = JSON.parse(rawJson) as {
+        paletteName?: unknown;
+        rationale?: unknown;
+        colors?: Array<{ name?: unknown; label?: unknown; value?: unknown }>;
+      };
+
+      const colors = Array.isArray(parsed.colors)
+        ? sanitizeGeneratedColors(parsed.colors)
+        : [];
+
+      if (colors.length === 0) {
+        res.status(502).json({
+          error: 'Model nie zwrócił poprawnych kolorów w formacie hex.',
+        });
+        return;
+      }
+
+      res.json({
+        palette: {
+          paletteName:
+            typeof parsed.paletteName === 'string' && parsed.paletteName.trim()
+              ? parsed.paletteName.trim()
+              : stylePrompt || 'AI Palette',
+          rationale:
+            typeof parsed.rationale === 'string'
+              ? parsed.rationale.trim()
+              : '',
+          colors,
+        },
+      });
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Nieznany błąd wywołania Gemini API.';
+      const status =
+        typeof (err as { status?: unknown })?.status === 'number'
+          ? (err as { status: number }).status
+          : 500;
+      res.status(status >= 400 && status < 600 ? status : 500).json({
+        error: `Nie udało się wygenerować palety kolorów AI: ${message}`,
       });
     }
   });

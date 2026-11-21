@@ -89,6 +89,10 @@ import {
   type SpacingPrefix,
 } from '../utils/editorLogic';
 import { downloadTextFile } from '../utils/exportFormats';
+import {
+  mergeGeneratedPaletteIntoThemeVars,
+  type GeneratedThemePalette,
+} from '../utils/themePalette';
 
 interface InspectorPanelProps {
   selectedId: string;
@@ -378,6 +382,14 @@ export function InspectorPanel({
     useState<ThemeVarCategory>('color');
   const [newVarValue, setNewVarValue] = useState('#7c3aed');
   const [bulkCustomClasses, setBulkCustomClasses] = useState('');
+  const [aiThemePrompt, setAiThemePrompt] = useState('');
+  const [aiBaseColor, setAiBaseColor] = useState('#d97706');
+  const [useAiBaseColor, setUseAiBaseColor] = useState(false);
+  const [isGeneratingThemePalette, setIsGeneratingThemePalette] =
+    useState(false);
+  const [aiThemePalette, setAiThemePalette] =
+    useState<GeneratedThemePalette | null>(null);
+  const [aiThemeError, setAiThemeError] = useState('');
 
   useEffect(() => {
     try {
@@ -456,6 +468,57 @@ export function InspectorPanel({
       );
     } finally {
       setIsGeneratingLayout(false);
+    }
+  };
+
+  const handleGenerateThemePalette = async (promptOverride?: string) => {
+    const activePrompt = (promptOverride ?? aiThemePrompt).trim();
+    if (promptOverride !== undefined) {
+      setAiThemePrompt(promptOverride);
+    }
+
+    if (!activePrompt && !useAiBaseColor) {
+      setAiThemeError(
+        'Podaj opis stylu (np. "warm autumn") lub włącz kolor bazowy.'
+      );
+      return;
+    }
+
+    setIsGeneratingThemePalette(true);
+    setAiThemeError('');
+
+    try {
+      const response = await fetch('/api/ai/theme-palette', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: activePrompt,
+          baseColor: useAiBaseColor ? aiBaseColor : '',
+          currentVariables: themeVars,
+        }),
+      });
+
+      const payload = (await response.json()) as {
+        palette?: GeneratedThemePalette;
+        error?: string;
+      };
+
+      if (!response.ok || !payload.palette) {
+        setAiThemePalette(null);
+        setAiThemeError(
+          payload.error || 'Nie udało się wygenerować palety kolorów AI.'
+        );
+        return;
+      }
+
+      setAiThemePalette(payload.palette);
+    } catch {
+      setAiThemePalette(null);
+      setAiThemeError(
+        'Błąd połączenia z serwerem podczas generowania palety AI.'
+      );
+    } finally {
+      setIsGeneratingThemePalette(false);
     }
   };
 
@@ -1019,6 +1082,8 @@ export function InspectorPanel({
                     'Centered card',
                     'Sidebar-content layout',
                     'Header row',
+                    'Auto-align center',
+                    'Justify-between row',
                   ].map((presetLabel) => (
                     <button
                       key={presetLabel}
@@ -1036,7 +1101,7 @@ export function InspectorPanel({
                   <input
                     type="text"
                     aria-label="Cel układu Smart Layout"
-                    placeholder="np. Centered card, 2-col grid..."
+                    placeholder="np. Centered card, items-center, justify-between..."
                     value={smartLayoutGoal}
                     onChange={(e) => setSmartLayoutGoal(e.target.value)}
                     onKeyDown={(e) => {
@@ -2090,6 +2155,172 @@ export function InspectorPanel({
                 <span>{themeStatusMessage}</span>
               </div>
             )}
+
+            <div
+              data-testid="ai-theme-palette-card"
+              className="p-2.5 rounded-lg bg-indigo-50/50 border border-indigo-200/80 space-y-2"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                  <span className="text-[11px] font-bold text-indigo-950">
+                    Generator palety AI
+                  </span>
+                </div>
+                <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-[10px] font-semibold text-indigo-700">
+                  AI
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-1">
+                {['warm autumn', 'cyberpunk neon', 'nordic sage'].map(
+                  (presetPrompt) => (
+                    <button
+                      key={presetPrompt}
+                      type="button"
+                      disabled={isGeneratingThemePalette}
+                      onClick={() => void handleGenerateThemePalette(presetPrompt)}
+                      className="px-2 py-0.5 bg-white hover:bg-indigo-100/70 border border-indigo-200 rounded text-[10px] font-medium text-indigo-800 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    >
+                      {presetPrompt}
+                    </button>
+                  )
+                )}
+              </div>
+
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  data-testid="ai-theme-prompt-input"
+                  aria-label="Opis palety kolorów AI"
+                  placeholder="np. warm autumn, cyberpunk neon..."
+                  value={aiThemePrompt}
+                  onChange={(e) => setAiThemePrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleGenerateThemePalette();
+                    }
+                  }}
+                  className="flex-1 min-w-0 px-2 py-1.5 bg-white border border-indigo-200 rounded-md text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <button
+                  type="button"
+                  data-testid="ai-theme-generate-btn"
+                  aria-label="Generuj paletę kolorów AI"
+                  disabled={isGeneratingThemePalette}
+                  onClick={() => void handleGenerateThemePalette()}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-[11px] font-semibold rounded-md transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 shrink-0"
+                >
+                  {isGeneratingThemePalette ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  {isGeneratingThemePalette ? 'Tworzę...' : 'Generuj'}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-0.5">
+                <label className="inline-flex items-center gap-1.5 text-[10px] font-medium text-slate-600 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    data-testid="ai-theme-base-color-toggle"
+                    checked={useAiBaseColor}
+                    onChange={(e) => setUseAiBaseColor(e.target.checked)}
+                    className="rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Kolor bazowy</span>
+                </label>
+
+                {useAiBaseColor && (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="color"
+                      data-testid="ai-theme-base-color-input"
+                      aria-label="Wybierz kolor bazowy palety AI"
+                      value={aiBaseColor}
+                      onChange={(e) => setAiBaseColor(e.target.value)}
+                      className="w-6 h-5 rounded border border-indigo-200 cursor-pointer bg-white p-0.5"
+                    />
+                    <span className="text-[10px] font-mono text-slate-600">
+                      {aiBaseColor}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {aiThemeError && (
+                <p
+                  role="alert"
+                  data-testid="ai-theme-error"
+                  className="p-2 rounded-md bg-red-50 border border-red-200 text-[11px] text-red-700 leading-snug"
+                >
+                  {aiThemeError}
+                </p>
+              )}
+
+              {aiThemePalette && (
+                <div
+                  data-testid="ai-theme-preview"
+                  className="p-2 bg-white border border-indigo-200/80 rounded-lg space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-slate-800 truncate">
+                        {aiThemePalette.paletteName}
+                      </div>
+                      {aiThemePalette.rationale && (
+                        <p className="text-[10px] text-slate-500 leading-snug">
+                          {aiThemePalette.rationale}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    {aiThemePalette.colors.map((c) => (
+                      <div
+                        key={c.name}
+                        className="flex items-center justify-between gap-2 text-[10px] py-0.5"
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <svg
+                            viewBox="0 0 12 12"
+                            className="w-3.5 h-3.5 rounded-xs border border-slate-300 shrink-0"
+                            aria-hidden="true"
+                          >
+                            <rect width="12" height="12" fill={c.value} />
+                          </svg>
+                          <span className="font-mono text-slate-700 truncate">
+                            {c.name}
+                          </span>
+                        </div>
+                        <span className="font-mono text-slate-500 shrink-0">
+                          {c.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="ai-theme-apply-btn"
+                    onClick={() => {
+                      const nextVars = mergeGeneratedPaletteIntoThemeVars(
+                        themeVars,
+                        aiThemePalette.colors
+                      );
+                      onReplaceThemeVars(nextVars);
+                      showTemporaryThemeStatus(
+                        `Zastosowano paletę AI: ${aiThemePalette.paletteName}`
+                      );
+                    }}
+                    className="w-full py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded text-[11px] font-semibold text-indigo-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                  >
+                    Zastosuj paletę
+                  </button>
+                </div>
+              )}
+            </div>
 
             <div className="space-y-2">
               <div className="space-y-1">

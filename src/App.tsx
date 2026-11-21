@@ -10,6 +10,7 @@ import { EditorToolbar } from './components/EditorToolbar';
 import { InspectorPanel } from './components/InspectorPanel';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { LeftSidebar } from './components/LeftSidebar';
+import { ResponsivePreview } from './components/ResponsivePreview';
 import {
   ASSETS_STORAGE_KEY,
   COMPONENT_HISTORY_STORAGE_KEY,
@@ -81,9 +82,14 @@ import {
   serializeNodesToJson,
   stepZoom,
   toggleMultiSelection,
+  toggleNodeVisibilityInTree,
   updateNodeInTree,
   type DropPosition,
 } from './utils/editorLogic';
+import {
+  AUTO_SAVE_INTERVAL_MS,
+  createAutoSaveController,
+} from './utils/autoSave';
 import {
   applyDesignLintFix,
   fixAllDesignLintIssues,
@@ -287,9 +293,11 @@ export default function App() {
     loadInitialBooleanFlag(RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY, false)
   );
   const [previewMode, setPreviewMode] = useState<boolean>(false);
+  const [responsivePreview, setResponsivePreview] = useState<boolean>(false);
   const [showCode, setShowCode] = useState<boolean>(false);
   const [codeExportFormat, setCodeExportFormat] =
     useState<CodePreviewFormat>('react');
+  const [isJsxPrettier, setIsJsxPrettier] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
   const [copiedJson, setCopiedJson] = useState<boolean>(false);
   const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
@@ -299,14 +307,39 @@ export default function App() {
   );
   const canvasScrollRef = useRef<HTMLDivElement | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
+  const nodesRef = useRef<NodesMap>(nodes);
+  nodesRef.current = nodes;
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(nodes));
-    } catch {
-      // Ignore storage quota errors
-    }
-  }, [nodes]);
+    const controller = createAutoSaveController({
+      getNodes: () => nodesRef.current,
+      storage: typeof window !== 'undefined' ? window.localStorage : null,
+      storageKey: STORAGE_KEY,
+      intervalMs: AUTO_SAVE_INTERVAL_MS,
+    });
+    controller.start();
+
+    const handleBeforeUnload = () => {
+      controller.flush();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        controller.flush();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      controller.flush();
+      controller.stop();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -470,6 +503,13 @@ export default function App() {
       );
     },
     [multiSelectMode, nodes]
+  );
+
+  const handleToggleNodeVisibility = useCallback(
+    (id: string) => {
+      commitNodes((prev) => toggleNodeVisibilityInTree(prev, id));
+    },
+    [commitNodes]
   );
 
   const handleToggleMultiSelect = useCallback(() => {
@@ -1085,8 +1125,13 @@ export default function App() {
   }, [confirmReset, commitNodes]);
 
   const generatedCode = useMemo(
-    () => generateReactJSX(nodes, seoMetadata),
-    [nodes, seoMetadata]
+    () =>
+      generateReactJSX(
+        nodes,
+        seoMetadata,
+        isJsxPrettier ? 'pretty' : 'minified'
+      ),
+    [nodes, seoMetadata, isJsxPrettier]
   );
   const generatedHtml = useMemo(
     () => generateHtmlExport(nodes, themeVars, seoMetadata),
@@ -1221,6 +1266,7 @@ export default function App() {
             selectedId={selectedId}
             selectedIds={selectedIds}
             onSelectNode={handleSelectNode}
+            onToggleNodeVisibility={handleToggleNodeVisibility}
           />
         )}
 
@@ -1233,7 +1279,11 @@ export default function App() {
             confirmReset={confirmReset}
             onReset={handleResetCanvas}
             viewport={viewport}
-            onChangeViewport={setViewport}
+            onChangeViewport={(mode) => {
+              setViewport(mode);
+              setResponsivePreview(false);
+              setShowCode(false);
+            }}
             zoom={zoom}
             onZoomIn={() => setZoom((z) => stepZoom(z, 'in'))}
             onZoomOut={() => setZoom((z) => stepZoom(z, 'out'))}
@@ -1257,13 +1307,19 @@ export default function App() {
             previewMode={previewMode}
             onTogglePreview={() => {
               setPreviewMode((p) => !p);
+              setResponsivePreview(false);
+              setShowCode(false);
+            }}
+            responsivePreview={responsivePreview}
+            onToggleResponsivePreview={() => {
+              setResponsivePreview((r) => !r);
               setShowCode(false);
             }}
             showCode={showCode}
             onToggleShowCode={() => setShowCode((s) => !s)}
           />
 
-          {!previewMode && !showCode && (
+          {!previewMode && !showCode && !responsivePreview && (
             <CanvasBreadcrumb
               nodes={nodes}
               selectedId={selectedId}
@@ -1272,7 +1328,7 @@ export default function App() {
           )}
 
           <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden">
-            {showRulers && !showCode && (
+            {showRulers && !showCode && !responsivePreview && (
               <CanvasRulers
                 scrollContainerRef={canvasScrollRef}
                 canvasViewportRef={canvasViewportRef}
@@ -1286,10 +1342,12 @@ export default function App() {
             <div
               ref={canvasScrollRef}
               className={`flex-1 overflow-auto bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:18px_18px] ${
-                showRulers && !showCode ? 'pt-10 pl-10 pr-6 pb-6' : 'p-6'
+                showRulers && !showCode && !responsivePreview
+                  ? 'pt-10 pl-10 pr-6 pb-6'
+                  : 'p-6'
               }`}
               onClick={() => {
-                if (!previewMode && !showCode) {
+                if (!previewMode && !showCode && !responsivePreview) {
                   setSelectedIds(['root']);
                 }
               }}
@@ -1301,10 +1359,31 @@ export default function App() {
                   svgCode={generatedSvg}
                   activeFormat={codeExportFormat}
                   onChangeFormat={setCodeExportFormat}
+                  isPrettier={isJsxPrettier}
+                  onTogglePrettier={() => setIsJsxPrettier((p) => !p)}
                   copied={copied}
                   onCopy={handleCopyCode}
                   onDownloadFormat={handleExportFormat}
                   isExportingPdf={isExportingPdf}
+                />
+              ) : responsivePreview ? (
+                <ResponsivePreview
+                  nodes={nodes}
+                  selectedId={selectedId}
+                  selectedIds={selectedIds}
+                  onSelectViewportForEditing={(nextViewport) => {
+                    setViewport(nextViewport);
+                    setResponsivePreview(false);
+                    setPreviewMode(false);
+                  }}
+                  onExitResponsivePreview={() => setResponsivePreview(false)}
+                  onSelectNode={handleSelectNode}
+                  onMoveNode={handleMoveNode}
+                  onDropNewComponent={handleDropNewComponent}
+                  onDropCardPreset={handleDropCardPreset}
+                  onDropNewIcon={handleDropNewIcon}
+                  onDropSavedComponent={handleDropSavedComponent}
+                  onDropAsset={handleDropAsset}
                 />
               ) : (
                 <div

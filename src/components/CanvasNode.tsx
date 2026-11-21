@@ -18,6 +18,7 @@ import { getLucideIcon } from '../constants/lucideIcons';
 import {
   isContainerNodeType,
   isDescendantOrSelf,
+  isNodeHiddenInTree,
   splitIconClasses,
   splitOuterLayoutClasses,
   type DropPosition,
@@ -303,6 +304,7 @@ export const CanvasNode = memo(function CanvasNode({
   );
 
   if (!node) return null;
+  if (id !== 'root' && isNodeHiddenInTree(nodes, id)) return null;
 
   const isSelected = !previewMode && (selectedId === id || selectedIds.includes(id));
   const isMultiSelected = !previewMode && selectedIds.length > 1 && selectedIds.includes(id);

@@ -1,4 +1,4 @@
-import { Check, Code, Copy, Download, FileDown } from 'lucide-react';
+import { Check, Code, Copy, Download, FileDown, Sparkles } from 'lucide-react';
 import type { ExportFormat } from '../types/editor';
 import type { CodePreviewFormat } from '../utils/exportFormats';
 
@@ -8,6 +8,8 @@ interface CodeExportViewProps {
   svgCode: string;
   activeFormat: CodePreviewFormat;
   onChangeFormat: (format: CodePreviewFormat) => void;
+  isPrettier: boolean;
+  onTogglePrettier: () => void;
   copied: boolean;
   onCopy: (content: string) => void;
   onDownloadFormat: (format: ExportFormat) => void;
@@ -30,6 +32,8 @@ export function CodeExportView({
   svgCode,
   activeFormat,
   onChangeFormat,
+  isPrettier,
+  onTogglePrettier,
   copied,
   onCopy,
   onDownloadFormat,
@@ -44,6 +48,8 @@ export function CodeExportView({
       : activeFormat === 'svg'
         ? svgCode
         : reactCode;
+
+  const isJsxTab = activeFormat === 'react';
 
   return (
     <div
@@ -81,7 +87,30 @@ export function CodeExportView({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="prettier-toggle-btn"
+            aria-pressed={isPrettier}
+            disabled={!isJsxTab}
+            onClick={onTogglePrettier}
+            title={
+              !isJsxTab
+                ? 'Formatowanie Prettier dotyczy kodu React (JSX)'
+                : isPrettier
+                  ? 'Prettier włączony (sformatowany JSX) — kliknij, aby zminimalizować'
+                  : 'Format zminimalizowany — kliknij, aby sformatować (Prettier)'
+            }
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
+              isPrettier && isJsxTab
+                ? 'bg-indigo-600/25 border-indigo-400/60 text-indigo-200 hover:bg-indigo-600/35'
+                : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Prettier</span>
+          </button>
+
           <button
             type="button"
             onClick={() => onCopy(displayedCode)}
@@ -116,7 +145,13 @@ export function CodeExportView({
         </div>
       </div>
 
-      <pre className="text-slate-300 font-mono text-xs leading-relaxed overflow-auto flex-1 pb-2 pr-2">
+      <pre
+        data-testid="code-export-pre"
+        data-jsx-format={isJsxTab ? (isPrettier ? 'pretty' : 'minified') : activeFormat}
+        className={`text-slate-300 font-mono text-xs leading-relaxed overflow-auto flex-1 pb-2 pr-2 ${
+          isJsxTab && !isPrettier ? 'whitespace-pre-wrap break-all' : ''
+        }`}
+      >
         <code>{displayedCode}</code>
       </pre>
     </div>
