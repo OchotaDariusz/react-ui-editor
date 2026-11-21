@@ -20,6 +20,7 @@ import {
   LayoutGrid,
   ListChecks,
   Loader2,
+  MessageSquare,
   Palette,
   PanelRightClose,
   Plus,
@@ -30,10 +31,14 @@ import {
   Upload,
 } from 'lucide-react';
 import type {
+  BootstrapVersion,
   EditorNode,
   InspectorTab,
+  MaterialNodeMeta,
+  NodeBlueprint,
   NodesMap,
   SeoMetadata,
+  TailwindVersion,
   ThemeVarCategory,
   ThemeVariable,
 } from '../types/editor';
@@ -42,6 +47,7 @@ import {
   THEME_PRESETS,
 } from '../constants/editorDefaults';
 import { ICON_LIBRARY } from '../constants/lucideIcons';
+import { CustomStylesPanel } from './CustomStylesPanel';
 import { DesignLintPanel } from './DesignLintPanel';
 import { DevToolsPanel } from './DevToolsPanel';
 import { GridLayoutPanel } from './GridLayoutPanel';
@@ -93,6 +99,7 @@ import {
   mergeGeneratedPaletteIntoThemeVars,
   type GeneratedThemePalette,
 } from '../utils/themePalette';
+import { getNodeComments } from '../utils/nodeComments';
 
 interface InspectorPanelProps {
   selectedId: string;
@@ -128,6 +135,24 @@ interface InspectorPanelProps {
   onCollapse?: () => void;
   seoMetadata: SeoMetadata;
   onChangeSeo: (field: keyof SeoMetadata, value: string) => void;
+  onAddNodeComment: (nodeId: string, text: string) => void;
+  onDeleteNodeComment: (nodeId: string, commentId: string) => void;
+  tailwindVersion: TailwindVersion;
+  onChangeTailwindVersion: (version: TailwindVersion) => void;
+  bootstrapVersion: BootstrapVersion;
+  onChangeBootstrapVersion: (version: BootstrapVersion) => void;
+  enableMd2: boolean;
+  onToggleEnableMd2: (enabled: boolean) => void;
+  enableMd3: boolean;
+  onToggleEnableMd3: (enabled: boolean) => void;
+  sharedThemeCss: string;
+  onChangeSharedThemeCss: (nextCss: string) => void;
+  onUpdateNodeCustomCss: (nodeId: string, nextCss: string) => void;
+  onUpdateNodeMaterialMeta: (
+    nodeId: string,
+    updater: (curr: MaterialNodeMeta) => MaterialNodeMeta
+  ) => void;
+  onInsertBlueprint: (blueprint: NodeBlueprint, label: string) => void;
 }
 
 interface SmartLayoutSuggestion {
@@ -143,6 +168,7 @@ function loadInitialInspectorTab(): InspectorTab {
     if (
       saved === 'properties' ||
       saved === 'grid-layout' ||
+      saved === 'custom-styles' ||
       saved === 'devtools' ||
       saved === 'shortcuts'
     ) {
@@ -359,6 +385,21 @@ export function InspectorPanel({
   onCollapse,
   seoMetadata,
   onChangeSeo,
+  onAddNodeComment,
+  onDeleteNodeComment,
+  tailwindVersion,
+  onChangeTailwindVersion,
+  bootstrapVersion,
+  onChangeBootstrapVersion,
+  enableMd2,
+  onToggleEnableMd2,
+  enableMd3,
+  onToggleEnableMd3,
+  sharedThemeCss,
+  onChangeSharedThemeCss,
+  onUpdateNodeCustomCss,
+  onUpdateNodeMaterialMeta,
+  onInsertBlueprint,
 }: InspectorPanelProps) {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>(
     loadInitialInspectorTab
@@ -390,6 +431,7 @@ export function InspectorPanel({
   const [aiThemePalette, setAiThemePalette] =
     useState<GeneratedThemePalette | null>(null);
   const [aiThemeError, setAiThemeError] = useState('');
+  const [commentDraft, setCommentDraft] = useState('');
 
   useEffect(() => {
     try {
@@ -403,6 +445,7 @@ export function InspectorPanel({
     setSmartLayoutSuggestions([]);
     setSmartLayoutError('');
     setSavedNotice(false);
+    setCommentDraft('');
   }, [selectedId]);
 
   const activeThemePresetId = detectMatchingThemePresetId(themeVars, THEME_PRESETS);
@@ -671,20 +714,20 @@ export function InspectorPanel({
       <div
         role="tablist"
         aria-label="Tryb inspektora"
-        className="flex items-center p-1 gap-0.5 border-b border-slate-100 bg-slate-50/70 shrink-0"
+        className="grid grid-cols-5 p-1 gap-0.5 border-b border-slate-100 bg-slate-50/70 shrink-0"
       >
         <button
           type="button"
           role="tab"
           aria-selected={inspectorTab === 'properties'}
           onClick={() => setInspectorTab('properties')}
-          className={`flex-auto flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-md text-[9.5px] font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             inspectorTab === 'properties'
               ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <SlidersHorizontal className="w-3 h-3 shrink-0" />
+          <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
           Właściwości
         </button>
         <button
@@ -692,27 +735,43 @@ export function InspectorPanel({
           role="tab"
           aria-selected={inspectorTab === 'grid-layout'}
           onClick={() => setInspectorTab('grid-layout')}
-          className={`flex-auto flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-md text-[9.5px] font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             inspectorTab === 'grid-layout'
               ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <LayoutGrid className="w-3 h-3 shrink-0" />
+          <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
           Grid Layout
+        </button>
+        <button
+          type="button"
+          role="tab"
+          data-testid="tab-custom-styles"
+          aria-label="Custom Styles"
+          aria-selected={inspectorTab === 'custom-styles'}
+          onClick={() => setInspectorTab('custom-styles')}
+          className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-md text-[9.5px] font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            inspectorTab === 'custom-styles'
+              ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Palette className="w-3.5 h-3.5 shrink-0" />
+          Custom Styles
         </button>
         <button
           type="button"
           role="tab"
           aria-selected={inspectorTab === 'devtools'}
           onClick={() => setInspectorTab('devtools')}
-          className={`flex-auto flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-md text-[9.5px] font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             inspectorTab === 'devtools'
               ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <Code2 className="w-3 h-3 shrink-0" />
+          <Code2 className="w-3.5 h-3.5 shrink-0" />
           DevTools
         </button>
         <button
@@ -721,13 +780,13 @@ export function InspectorPanel({
           title="Keyboard Shortcuts"
           aria-selected={inspectorTab === 'shortcuts'}
           onClick={() => setInspectorTab('shortcuts')}
-          className={`flex-auto flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+          className={`flex flex-col items-center justify-center gap-0.5 py-1.5 px-1 rounded-md text-[9.5px] font-semibold transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
             inspectorTab === 'shortcuts'
               ? 'bg-white text-blue-600 shadow-sm border border-slate-200'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <Keyboard className="w-3 h-3 shrink-0" />
+          <Keyboard className="w-3.5 h-3.5 shrink-0" />
           Shortcuts
         </button>
       </div>
@@ -749,6 +808,32 @@ export function InspectorPanel({
           onUpdateNodeClassById={onUpdateNodeClassById}
           onSelectNode={onSelectNode}
           onAddGridNode={onAddGridNode}
+        />
+      ) : inspectorTab === 'custom-styles' ? (
+        <CustomStylesPanel
+          selectedId={selectedId}
+          selectedNode={selectedNode}
+          isMultiSelect={isMultiSelect}
+          nodes={nodes}
+          themeVars={themeVars}
+          seoMetadata={seoMetadata}
+          tailwindVersion={tailwindVersion}
+          onChangeTailwindVersion={onChangeTailwindVersion}
+          bootstrapVersion={bootstrapVersion}
+          onChangeBootstrapVersion={onChangeBootstrapVersion}
+          enableMd2={enableMd2}
+          onToggleEnableMd2={onToggleEnableMd2}
+          enableMd3={enableMd3}
+          onToggleEnableMd3={onToggleEnableMd3}
+          sharedThemeCss={sharedThemeCss}
+          onChangeSharedThemeCss={onChangeSharedThemeCss}
+          onUpdateNodeClass={(nextClassName) =>
+            onUpdateNode('className', nextClassName, true)
+          }
+          onUpdateNodeCustomCss={onUpdateNodeCustomCss}
+          onUpdateNodeMaterialMeta={onUpdateNodeMaterialMeta}
+          onUpdateThemeVar={onUpdateThemeVar}
+          onInsertBlueprint={onInsertBlueprint}
         />
       ) : inspectorTab === 'devtools' ? (
         <DevToolsPanel
@@ -1716,6 +1801,7 @@ export function InspectorPanel({
                       <button
                         key={cls}
                         type="button"
+                        data-preserve-swatch="true"
                         title={`${label} (${cls})`}
                         aria-label={`Kolor tekstu ${label}`}
                         aria-pressed={isActive}
@@ -2593,21 +2679,20 @@ export function InspectorPanel({
                     </div>
 
                     <div className="flex items-center gap-1.5">
-                      {isColor && (
-                        <input
-                          type="color"
-                          aria-label={`Wybierz kolor ${item.name}`}
-                          value={
-                            /^#[0-9a-fA-F]{6}$/.test(item.value)
-                              ? item.value
-                              : '#2563eb'
-                          }
-                          onChange={(e) =>
-                            onUpdateThemeVar(item.id, e.target.value)
-                          }
-                          className="w-6 h-6 p-0.5 bg-white border border-slate-200 rounded cursor-pointer shrink-0"
-                        />
-                      )}
+                      <input
+                        type="color"
+                        data-testid={`theme-var-color-${item.id}`}
+                        aria-label={`Wybierz kolor ${item.name}`}
+                        value={
+                          /^#[0-9a-fA-F]{6}$/.test(item.value)
+                            ? item.value
+                            : '#2563eb'
+                        }
+                        onChange={(e) =>
+                          onUpdateThemeVar(item.id, e.target.value)
+                        }
+                        className="w-6 h-6 p-0.5 bg-white border border-slate-200 rounded cursor-pointer shrink-0"
+                      />
                       <input
                         type="text"
                         aria-label={`Wartość ${item.name}`}
@@ -2827,6 +2912,103 @@ export function InspectorPanel({
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
               />
             </div>
+          )}
+
+          {!isMultiSelect && selectedNode && (
+            <section
+              aria-label="Comments"
+              data-testid="inspector-comments-section"
+              className="space-y-2.5 p-3 bg-amber-50/40 rounded-xl border border-amber-200/80"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <h3 className="text-[11px] font-bold text-slate-700 tracking-wide">
+                    Comments
+                  </h3>
+                </div>
+                <span className="text-[10px] font-mono font-semibold text-amber-700 tabular-nums">
+                  {getNodeComments(selectedNode).length}
+                </span>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const trimmed = commentDraft.trim();
+                  if (!trimmed) return;
+                  onAddNodeComment(selectedNode.id, trimmed);
+                  setCommentDraft('');
+                }}
+                className="flex gap-1.5"
+              >
+                <input
+                  type="text"
+                  data-testid="node-comment-input"
+                  aria-label="Notatka do komponentu"
+                  placeholder="Dodaj notatkę do komponentu..."
+                  value={commentDraft}
+                  onChange={(e) => setCommentDraft(e.target.value)}
+                  className="flex-1 min-w-0 px-2.5 py-1.5 bg-white border border-amber-200 rounded-md text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <button
+                  type="submit"
+                  data-testid="add-node-comment-btn"
+                  disabled={!commentDraft.trim()}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-300 text-white text-[11px] font-semibold rounded-md transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Dodaj
+                </button>
+              </form>
+
+              {getNodeComments(selectedNode).length > 0 ? (
+                <div
+                  data-testid="node-comment-list"
+                  className="space-y-1.5 max-h-44 overflow-y-auto pr-0.5"
+                >
+                  {getNodeComments(selectedNode).map((comment) => {
+                    const formattedTime = new Date(
+                      comment.createdAt
+                    ).toLocaleTimeString('pl-PL', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                    return (
+                      <div
+                        key={comment.id}
+                        data-testid={`node-comment-item-${comment.id}`}
+                        className="p-2 bg-white border border-amber-200/80 rounded-lg flex items-start justify-between gap-2"
+                      >
+                        <div className="min-w-0 flex-1 space-y-0.5">
+                          <p className="text-xs text-slate-800 leading-snug break-words">
+                            {comment.text}
+                          </p>
+                          <span className="block text-[10px] font-mono text-slate-400">
+                            {formattedTime}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          data-testid={`delete-node-comment-btn-${comment.id}`}
+                          aria-label="Usuń notatkę"
+                          onClick={() =>
+                            onDeleteNodeComment(selectedNode.id, comment.id)
+                          }
+                          className="p-1 text-slate-400 hover:text-red-600 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 shrink-0"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-[10px] text-slate-500">
+                  Brak notatek dla tego elementu. Dodane komentarze pojawią się w drzewie warstw.
+                </p>
+              )}
+            </section>
           )}
 
           {!isMultiSelect && selectedNode && (

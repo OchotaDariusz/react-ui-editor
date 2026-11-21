@@ -218,19 +218,19 @@ export function ResponsivePreview({
               aria-label={`Widok ${pane.label} ${pane.badge}`}
               className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col min-w-0"
             >
-              <header className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 min-w-0">
+              <header className="px-2.5 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1 min-w-0">
                   <Icon
                     className="w-3.5 h-3.5 text-blue-600 shrink-0"
                     aria-hidden="true"
                   />
-                  <span className="text-xs font-semibold text-slate-800 truncate">
+                  <span className="text-[11px] font-semibold text-slate-800 whitespace-nowrap shrink-0">
                     {pane.label}
                   </span>
-                  <span className="text-[10px] font-mono text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded shrink-0">
+                  <span className="text-[10px] font-mono text-slate-500 bg-white border border-slate-200 px-1 py-0.5 rounded shrink-0">
                     {pane.badge}
                   </span>
-                  <span className="text-[10px] font-mono text-slate-400 tabular-nums shrink-0">
+                  <span className="hidden xl:inline text-[10px] font-mono text-slate-400 tabular-nums shrink-0">
                     {pane.scalePercent}%
                   </span>
                 </div>
@@ -239,7 +239,7 @@ export function ResponsivePreview({
                   type="button"
                   aria-label={`Edytuj w widoku ${pane.label}`}
                   onClick={() => onSelectViewportForEditing(pane.id)}
-                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-0.5 rounded-md transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-1.5 py-0.5 rounded-md transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   Edytuj
                 </button>
@@ -247,6 +247,7 @@ export function ResponsivePreview({
 
               <div className="p-3 bg-slate-100/70 overflow-auto flex justify-center">
                 <div
+                  data-canvas-artboard="true"
                   className={`rp-wrap-${pane.id} relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs shrink-0`}
                 >
                   <div

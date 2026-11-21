@@ -8,12 +8,17 @@ import {
   Copy,
   Edit3,
   Eye,
+  EyeOff,
   FileCode2,
   FileDown,
   FileImage,
   FileText,
+  FolderOpen,
+  Globe,
   ListChecks,
+  MessageSquare,
   Monitor,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -21,14 +26,24 @@ import {
   Redo2,
   RotateCcw,
   Ruler,
+  Save,
+  Search,
   Smartphone,
+  Sun,
   Tablet,
   Undo2,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import type { ExportFormat, ViewportMode } from '../types/editor';
+import type {
+  ExportFormat,
+  NodesMap,
+  ThemeMode,
+  ViewportMode,
+} from '../types/editor';
 import { ZOOM_LEVELS } from '../utils/editorLogic';
+import { searchNodesByName } from '../utils/layerSearch';
 
 interface EditorToolbarProps {
   canUndo: boolean;
@@ -65,6 +80,17 @@ interface EditorToolbarProps {
   onToggleResponsivePreview: () => void;
   showCode: boolean;
   onToggleShowCode: () => void;
+  nodes: NodesMap;
+  layerSearchQuery: string;
+  onChangeLayerSearchQuery: (query: string) => void;
+  onSelectLayerSearchResult: (nodeId: string) => void;
+  onOpenWebpageImport: () => void;
+  themeMode: ThemeMode;
+  onToggleThemeMode: () => void;
+  activeProjectName: string | null;
+  projectSavedFlash: boolean;
+  onOpenProjectsModal: () => void;
+  onQuickSaveProject: () => void;
 }
 
 const VIEWPORT_OPTIONS: Array<{
@@ -112,27 +138,76 @@ export function EditorToolbar({
   onToggleResponsivePreview,
   showCode,
   onToggleShowCode,
+  nodes,
+  layerSearchQuery,
+  onChangeLayerSearchQuery,
+  onSelectLayerSearchResult,
+  onOpenWebpageImport,
+  themeMode,
+  onToggleThemeMode,
+  activeProjectName,
+  projectSavedFlash,
+  onOpenProjectsModal,
+  onQuickSaveProject,
 }: EditorToolbarProps) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [activeResultIdx, setActiveResultIdx] = useState(0);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const searchPopoverRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const minZoom = ZOOM_LEVELS[0];
   const maxZoom = ZOOM_LEVELS[ZOOM_LEVELS.length - 1];
   const zoomPercent = Math.round(zoom * 100);
+  const searchMatches = searchNodesByName(nodes, layerSearchQuery);
 
   useEffect(() => {
-    if (!exportMenuOpen) return;
+    setActiveResultIdx(0);
+  }, [layerSearchQuery, searchOpen]);
+
+  useEffect(() => {
+    if (searchOpen) {
+      window.setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 20);
+    }
+  }, [searchOpen]);
+
+  useEffect(() => {
+    const handleGlobalKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen((prev) => !prev);
+        setExportMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleGlobalKey);
+    return () => document.removeEventListener('keydown', handleGlobalKey);
+  }, []);
+
+  useEffect(() => {
+    if (!exportMenuOpen && !searchOpen) return;
     const handlePointerDown = (event: MouseEvent) => {
       if (
+        exportMenuOpen &&
         exportMenuRef.current &&
         !exportMenuRef.current.contains(event.target as Node)
       ) {
         setExportMenuOpen(false);
       }
+      if (
+        searchOpen &&
+        searchPopoverRef.current &&
+        !searchPopoverRef.current.contains(event.target as Node)
+      ) {
+        setSearchOpen(false);
+      }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setExportMenuOpen(false);
+        setSearchOpen(false);
       }
     };
     document.addEventListener('mousedown', handlePointerDown);
@@ -141,10 +216,10 @@ export function EditorToolbar({
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [exportMenuOpen]);
+  }, [exportMenuOpen, searchOpen]);
 
   return (
-    <header className="h-14 bg-white border-b border-slate-200 px-1.5 flex items-center justify-between gap-1 shrink-0 z-20">
+    <header className="min-h-14 bg-white border-b border-slate-200 px-2 py-1 flex flex-wrap items-center justify-between gap-1 shrink-0 z-20">
       <div className="flex items-center gap-0.5 shrink-0">
         <button
           type="button"
@@ -200,6 +275,204 @@ export function EditorToolbar({
         >
           <RotateCcw className="w-3.5 h-3.5" />
           {confirmReset && <span>Potwierdź</span>}
+        </button>
+
+        <div className="h-5 w-px bg-slate-200" aria-hidden="true" />
+        <div className="relative shrink-0" ref={searchPopoverRef}>
+          <button
+            type="button"
+            data-testid="global-search-btn"
+            aria-label="Szukaj komponentu w warstwach"
+            aria-expanded={searchOpen}
+            title="Szukaj komponentu w warstwach (Ctrl+K)"
+            onClick={() => {
+              setSearchOpen((prev) => !prev);
+              setExportMenuOpen(false);
+            }}
+            className={`flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+              searchOpen || layerSearchQuery.trim()
+                ? 'bg-amber-50 border-amber-300 text-amber-800'
+                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <Search className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden 2xl:inline">Szukaj</span>
+          </button>
+
+          {searchOpen && (
+            <div
+              data-testid="global-search-popover"
+              className="absolute left-0 mt-1.5 w-80 bg-white border border-slate-200 rounded-xl shadow-xl p-2 z-50 space-y-2"
+            >
+              <div className="relative flex items-center">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  data-testid="global-search-input"
+                  aria-label="Szukaj komponentu po nazwie w LayerTree"
+                  placeholder="Szukaj warstwy po nazwie..."
+                  value={layerSearchQuery}
+                  onChange={(e) => onChangeLayerSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      setActiveResultIdx((idx) =>
+                        searchMatches.length === 0
+                          ? 0
+                          : (idx + 1) % searchMatches.length
+                      );
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      setActiveResultIdx((idx) =>
+                        searchMatches.length === 0
+                          ? 0
+                          : (idx - 1 + searchMatches.length) %
+                            searchMatches.length
+                      );
+                    } else if (e.key === 'Enter') {
+                      const picked = searchMatches[activeResultIdx];
+                      if (picked) {
+                        e.preventDefault();
+                        onSelectLayerSearchResult(picked.id);
+                        setSearchOpen(false);
+                      }
+                    }
+                  }}
+                  className="w-full pl-8 pr-7 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                />
+                {layerSearchQuery && (
+                  <button
+                    type="button"
+                    aria-label="Wyczyść wyszukiwanie warstw"
+                    onClick={() => onChangeLayerSearchQuery('')}
+                    className="absolute right-2 p-0.5 text-slate-400 hover:text-slate-700 rounded"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              <div
+                role="listbox"
+                aria-label="Wyniki wyszukiwania komponentów"
+                data-testid="global-search-results"
+                className="max-h-60 overflow-y-auto divide-y divide-slate-100"
+              >
+                {searchMatches.length === 0 ? (
+                  <p className="py-4 px-2 text-center text-[11px] text-slate-400">
+                    Brak pasujących komponentów w drzewie warstw.
+                  </p>
+                ) : (
+                  searchMatches.map((item, index) => {
+                    const isActive = index === activeResultIdx;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="option"
+                        aria-selected={isActive}
+                        data-testid={`global-search-result-${item.id}`}
+                        onMouseEnter={() => setActiveResultIdx(index)}
+                        onClick={() => {
+                          onSelectLayerSearchResult(item.id);
+                          setSearchOpen(false);
+                        }}
+                        className={`w-full px-2.5 py-1.5 text-left rounded-lg flex items-center justify-between gap-2 transition-colors ${
+                          isActive
+                            ? 'bg-blue-50 text-blue-800'
+                            : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold truncate">
+                              {item.name}
+                            </span>
+                            {item.hidden && (
+                              <EyeOff
+                                className="w-3 h-3 text-slate-400 shrink-0"
+                                aria-label="Ukryty"
+                              />
+                            )}
+                            {item.commentCount > 0 && (
+                              <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 text-[9px] font-semibold shrink-0">
+                                <MessageSquare className="w-2.5 h-2.5" />
+                                {item.commentCount}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate">
+                            {item.pathLabel}
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">
+                          {item.type}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          data-testid="open-webpage-import-btn"
+          aria-label="Importuj stronę z URL"
+          title="Import Webpage (skanuj URL i odtwórz UI)"
+          onClick={onOpenWebpageImport}
+          className="flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-semibold border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
+          <Globe className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+          <span className="hidden 2xl:inline">Import URL</span>
+        </button>
+
+        <div className="h-5 w-px bg-slate-200" aria-hidden="true" />
+
+        <button
+          type="button"
+          data-testid="projects-library-btn"
+          aria-label="Projekty (Zapisz lub otwórz)"
+          title={
+            activeProjectName
+              ? `Projekty — Aktywny: ${activeProjectName}`
+              : 'Projekty — Zapisz i otwórz projekt'
+          }
+          onClick={onOpenProjectsModal}
+          className={`flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            activeProjectName
+              ? 'bg-blue-50 border-blue-200 text-blue-700'
+              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <FolderOpen className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden 2xl:inline">Projekty</span>
+        </button>
+
+        <button
+          type="button"
+          data-testid="quick-save-project-btn"
+          aria-label="Zapisz projekt (Ctrl+S)"
+          title={
+            activeProjectName
+              ? `Zapisz zmiany w „${activeProjectName}” (Ctrl+S)`
+              : 'Zapisz projekt (Ctrl+S)'
+          }
+          onClick={onQuickSaveProject}
+          className={`flex items-center gap-1 p-1.5 rounded-lg text-[11px] font-semibold border transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            projectSavedFlash
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          {projectSavedFlash ? (
+            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+          ) : (
+            <Save className="w-3.5 h-3.5 shrink-0" />
+          )}
         </button>
       </div>
 
@@ -303,8 +576,15 @@ export function EditorToolbar({
               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
           }`}
         >
-          <ListChecks className="w-3.5 h-3.5" />
-          {multiSelectCount > 1 ? `Multi (${multiSelectCount})` : 'Multi'}
+          <ListChecks className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden 2xl:inline">
+            {multiSelectCount > 1 ? `Multi (${multiSelectCount})` : 'Multi'}
+          </span>
+          {multiSelectCount > 1 && (
+            <span className="2xl:hidden text-[10px] font-bold">
+              {multiSelectCount}
+            </span>
+          )}
         </button>
 
         <button
@@ -320,8 +600,8 @@ export function EditorToolbar({
               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
           }`}
         >
-          <BoxSelect className="w-3.5 h-3.5" />
-          Guides
+          <BoxSelect className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden 2xl:inline">Guides</span>
         </button>
 
         <button
@@ -338,8 +618,8 @@ export function EditorToolbar({
               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
           }`}
         >
-          <Ruler className="w-3.5 h-3.5" />
-          Rulers
+          <Ruler className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden 2xl:inline">Rulers</span>
         </button>
 
         <button
@@ -509,6 +789,34 @@ export function EditorToolbar({
             )}
           </div>
         )}
+
+        <button
+          type="button"
+          data-testid="dark-mode-toggle-btn"
+          aria-pressed={themeMode === 'dark'}
+          aria-label={
+            themeMode === 'dark'
+              ? 'Przełącz na jasny motyw aplikacji'
+              : 'Przełącz na ciemny motyw aplikacji'
+          }
+          title={
+            themeMode === 'dark'
+              ? 'Tryb jasny aplikacji'
+              : 'Tryb ciemny aplikacji (Dark Mode)'
+          }
+          onClick={onToggleThemeMode}
+          className={`p-1.5 rounded-lg border transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+            themeMode === 'dark'
+              ? 'bg-amber-50 border-amber-300 text-amber-700'
+              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          {themeMode === 'dark' ? (
+            <Sun className="w-3.5 h-3.5" />
+          ) : (
+            <Moon className="w-3.5 h-3.5" />
+          )}
+        </button>
 
         <div className="h-5 w-px bg-slate-200" aria-hidden="true" />
         <button

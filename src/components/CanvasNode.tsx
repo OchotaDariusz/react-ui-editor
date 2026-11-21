@@ -13,8 +13,10 @@ import {
   type NodeBlueprint,
   type NodesMap,
   type NodeType,
+  type ThemeVariable,
 } from '../types/editor';
 import { getLucideIcon } from '../constants/lucideIcons';
+import { MaterialMuiNodeView } from './MaterialNodeRenderer';
 import {
   isContainerNodeType,
   isDescendantOrSelf,
@@ -42,6 +44,9 @@ interface CanvasNodeProps {
   selectedIds: string[];
   previewMode: boolean;
   showGuides: boolean;
+  highlightedNodeId?: string | null;
+  matchingSearchIds?: ReadonlySet<string>;
+  themeVars?: ThemeVariable[];
   onSelect: (id: string, additive?: boolean) => void;
   onMoveNode: (dragId: string, targetId: string, position: DropPosition) => void;
   onDropNewComponent?: (
@@ -110,6 +115,9 @@ export const CanvasNode = memo(function CanvasNode({
   selectedIds,
   previewMode,
   showGuides,
+  highlightedNodeId,
+  matchingSearchIds,
+  themeVars,
   onSelect,
   onMoveNode,
   onDropNewComponent,
@@ -128,6 +136,16 @@ export const CanvasNode = memo(function CanvasNode({
   useEffect(() => {
     setImgError(false);
   }, [src]);
+
+  useEffect(() => {
+    if (!previewMode && highlightedNodeId === id && elementRef.current) {
+      elementRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest',
+      });
+    }
+  }, [highlightedNodeId, id, previewMode]);
 
   const [{ isDragging }, drag] = useDrag<
     DragItem,
@@ -308,6 +326,8 @@ export const CanvasNode = memo(function CanvasNode({
 
   const isSelected = !previewMode && (selectedId === id || selectedIds.includes(id));
   const isMultiSelected = !previewMode && selectedIds.length > 1 && selectedIds.includes(id);
+  const isSearchHighlighted = !previewMode && highlightedNodeId === id;
+  const isSearchMatch = !previewMode && Boolean(matchingSearchIds?.has(id));
   const isRoot = id === 'root';
   const horizontal = isHorizontalLayout(parentNode);
 
@@ -321,15 +341,19 @@ export const CanvasNode = memo(function CanvasNode({
 
   const editorOutlineClass = previewMode
     ? ''
-    : isMultiSelected
-      ? 'ring-2 ring-violet-500 ring-offset-1 relative z-10 cursor-grab active:cursor-grabbing'
-      : isSelected
-        ? isRoot
-          ? 'ring-2 ring-inset ring-blue-500 rounded-2xl relative z-10'
-          : 'ring-2 ring-blue-500 ring-offset-1 relative z-10 cursor-grab active:cursor-grabbing'
-        : isRoot
-          ? 'relative transition-shadow duration-150 cursor-pointer'
-          : 'hover:ring-1 hover:ring-blue-300 relative transition-shadow duration-150 cursor-grab active:cursor-grabbing';
+    : isSearchHighlighted
+      ? 'ring-2 ring-amber-400 ring-offset-2 shadow-[0_0_0_4px_rgba(251,191,36,0.28)] relative z-20 cursor-grab active:cursor-grabbing'
+      : isMultiSelected
+        ? 'ring-2 ring-violet-500 ring-offset-1 relative z-10 cursor-grab active:cursor-grabbing'
+        : isSelected
+          ? isRoot
+            ? 'ring-2 ring-inset ring-blue-500 rounded-2xl relative z-10'
+            : 'ring-2 ring-blue-500 ring-offset-1 relative z-10 cursor-grab active:cursor-grabbing'
+          : isSearchMatch
+            ? 'ring-1 ring-amber-300 relative z-10 transition-shadow duration-150 cursor-grab active:cursor-grabbing'
+            : isRoot
+              ? 'relative transition-shadow duration-150 cursor-pointer'
+              : 'hover:ring-1 hover:ring-blue-300 relative transition-shadow duration-150 cursor-grab active:cursor-grabbing';
 
   const hoverDragHandleClass =
     canShowDragHandle && !isDragging
@@ -367,6 +391,8 @@ export const CanvasNode = memo(function CanvasNode({
     'data-node-id': id,
     'data-node-type': node.type,
     'data-selected': isSelected ? 'true' : undefined,
+    'data-search-highlighted': isSearchHighlighted ? 'true' : undefined,
+    'data-search-match': isSearchMatch ? 'true' : undefined,
     'data-guides': !previewMode && showGuides ? 'on' : undefined,
     'data-drop-position':
       !previewMode && isOverShallow && dropPosition ? dropPosition : undefined,
@@ -382,6 +408,49 @@ export const CanvasNode = memo(function CanvasNode({
       <GripVertical className="w-3.5 h-3.5 pointer-events-none" />
     </span>
   ) : null;
+
+  const renderedChildNodes = node.children.map((childId) => (
+    <CanvasNode
+      key={childId}
+      id={childId}
+      nodes={nodes}
+      selectedId={selectedId}
+      selectedIds={selectedIds}
+      previewMode={previewMode}
+      showGuides={showGuides}
+      highlightedNodeId={highlightedNodeId}
+      matchingSearchIds={matchingSearchIds}
+      themeVars={themeVars}
+      onSelect={onSelect}
+      onMoveNode={onMoveNode}
+      onDropNewComponent={onDropNewComponent}
+      onDropCardPreset={onDropCardPreset}
+      onDropNewIcon={onDropNewIcon}
+      onDropSavedComponent={onDropSavedComponent}
+      onDropAsset={onDropAsset}
+    />
+  ));
+
+  if (
+    !isRoot &&
+    node.sourceLibrary === 'mui-v9' &&
+    node.materialMeta?.componentTag
+  ) {
+    return (
+      <div
+        ref={attachRef}
+        {...dndDataProps}
+        data-source-library="mui-v9"
+        onClick={handleClick}
+        className={`${editorOutlineClass} ${guideOutlineClass} ${hoverDragHandleClass} ${dragStateClass} ${dropIndicatorClass} relative`.trim()}
+      >
+        {dragHandle}
+        <MaterialMuiNodeView node={node} themeVars={themeVars}>
+          {renderedChildNodes}
+        </MaterialMuiNodeView>
+      </div>
+    );
+  }
 
   switch (node.type) {
     case 'Container':
@@ -432,24 +501,7 @@ export const CanvasNode = memo(function CanvasNode({
               {node.name || node.id})
             </span>
           )}
-          {node.children.map((childId) => (
-            <CanvasNode
-              key={childId}
-              id={childId}
-              nodes={nodes}
-              selectedId={selectedId}
-              selectedIds={selectedIds}
-              previewMode={previewMode}
-              showGuides={showGuides}
-              onSelect={onSelect}
-              onMoveNode={onMoveNode}
-              onDropNewComponent={onDropNewComponent}
-              onDropCardPreset={onDropCardPreset}
-              onDropNewIcon={onDropNewIcon}
-              onDropSavedComponent={onDropSavedComponent}
-              onDropAsset={onDropAsset}
-            />
-          ))}
+          {renderedChildNodes}
         </div>
       );
     case 'Heading':

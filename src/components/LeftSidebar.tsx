@@ -86,6 +86,8 @@ interface LeftSidebarProps {
   nodes: NodesMap;
   selectedId: string;
   selectedIds: string[];
+  highlightedNodeId?: string | null;
+  matchingSearchIds?: ReadonlySet<string>;
   onSelectNode: (id: string, additive?: boolean) => void;
   onToggleNodeVisibility: (id: string) => void;
 }
@@ -184,7 +186,7 @@ function DraggableCardPresetButton({ onClickAdd }: { onClickAdd: () => void }) {
       type="button"
       onClick={onClickAdd}
       title="Karta Produktu — przeciągnij na płótno lub kliknij"
-      className={`w-full flex items-center gap-3 p-3 bg-gradient-to-r from-slate-50 to-blue-50/40 hover:from-blue-50 hover:to-blue-100/60 border border-slate-200 hover:border-blue-300 rounded-xl transition-all text-left cursor-grab active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+      className={`w-full flex items-center gap-3 p-3 bg-gradient-to-r from-slate-50 to-blue-50/40 dark:from-slate-800 dark:to-slate-900 hover:from-blue-50 hover:to-blue-100/60 dark:hover:from-slate-700 dark:hover:to-slate-800 border border-slate-200 hover:border-blue-300 rounded-xl transition-all text-left cursor-grab active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
         isDragging ? 'opacity-45 scale-98' : ''
       }`}
     >
@@ -361,6 +363,8 @@ export function LeftSidebar({
   nodes,
   selectedId,
   selectedIds,
+  highlightedNodeId,
+  matchingSearchIds,
   onSelectNode,
   onToggleNodeVisibility,
 }: LeftSidebarProps) {
@@ -1170,6 +1174,8 @@ export function LeftSidebar({
             nodes={nodes}
             selectedId={selectedId}
             selectedIds={selectedIds}
+            highlightedNodeId={highlightedNodeId}
+            matchingSearchIds={matchingSearchIds}
             onSelect={onSelectNode}
             onToggleVisibility={onToggleNodeVisibility}
           />

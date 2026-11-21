@@ -1,5 +1,12 @@
-import type { NodesMap, SeoMetadata, ThemeVariable } from '../types/editor';
+import type {
+  BootstrapVersion,
+  NodesMap,
+  SeoMetadata,
+  ThemeVariable,
+} from '../types/editor';
 import { buildThemeCssRules, isContainerNodeType } from './editorLogic';
+import { buildElementCustomStyleCssRules } from './cssEditor';
+import { getBootstrapAssets } from './bootstrapSupport';
 import { buildScopedThemeOverrideCssRules } from './themeUsage';
 
 export type CodePreviewFormat = 'react' | 'html' | 'svg';
@@ -63,9 +70,22 @@ const buildNodeHtml = (
   const cleanClass = (props.className || '').replace(/\s+/g, ' ').trim();
   const hasOverrides =
     node.themeOverrides && Object.keys(node.themeOverrides).length > 0;
+  const hasCustomCss = Boolean(
+    node.customStyleCss && node.customStyleCss.trim().length > 0
+  );
   let attrStr = cleanClass ? ` class="${escapeXmlAttr(cleanClass)}"` : '';
+  if (hasCustomCss) {
+    attrStr += ` data-node-id="${escapeXmlAttr(id)}"`;
+  }
   if (hasOverrides) {
     attrStr += ` data-theme-scope="${escapeXmlAttr(id)}"`;
+  }
+  if (node.htmlAttrs) {
+    for (const [k, v] of Object.entries(node.htmlAttrs)) {
+      if (/^[a-zA-Z_:][a-zA-Z0-9_.:-]*$/.test(k) && typeof v === 'string') {
+        attrStr += ` ${k}="${escapeXmlAttr(v)}"`;
+      }
+    }
   }
 
   if (node.type === 'Input' && props.placeholder) {
@@ -122,7 +142,11 @@ const buildNodeHtml = (
 export const generateHtmlExport = (
   nodes: NodesMap,
   themeVars: ThemeVariable[] = [],
-  seo?: SeoMetadata
+  seo?: SeoMetadata,
+  options?: {
+    sharedThemeCss?: string;
+    bootstrapVersion?: BootstrapVersion;
+  }
 ): string => {
   const title = seo?.title?.trim() || 'React UI Studio Export';
   const description = seo?.description?.trim() || '';
@@ -132,7 +156,9 @@ export const generateHtmlExport = (
     nodes,
     'data-theme-scope'
   );
-  const themeCss = [baseThemeCss, scopedOverridesCss]
+  const sharedCss = options?.sharedThemeCss?.trim() || '';
+  const elementCustomCss = buildElementCustomStyleCssRules(nodes);
+  const themeCss = [baseThemeCss, scopedOverridesCss, sharedCss, elementCustomCss]
     .filter(Boolean)
     .join('\n');
 
@@ -154,6 +180,12 @@ export const generateHtmlExport = (
   }
 
   headLines.push('  <script src="https://cdn.tailwindcss.com"></script>');
+  if (options?.bootstrapVersion) {
+    const bsAssets = getBootstrapAssets(options.bootstrapVersion);
+    headLines.push(
+      `  <link rel="stylesheet" href="${escapeXmlAttr(bsAssets.cssUrl)}" data-bootstrap-version="${options.bootstrapVersion}" />`
+    );
+  }
   if (themeCss) {
     headLines.push('  <style>');
     headLines.push(
@@ -166,10 +198,18 @@ export const generateHtmlExport = (
   }
 
   const bodyMarkup = buildNodeHtml(nodes, 'root', '  ');
+  const scriptFooter = options?.bootstrapVersion
+    ? `${getBootstrapAssets(options.bootstrapVersion)
+        .scriptUrls.map(
+          (url) =>
+            `  <script src="${escapeXmlAttr(url)}" data-bootstrap-version="${options.bootstrapVersion}"></script>`
+        )
+        .join('\n')}\n`
+    : '';
 
   return `<!DOCTYPE html>\n<html lang="pl">\n<head>\n${headLines.join(
     '\n'
-  )}\n</head>\n<body class="bg-slate-50 min-h-screen antialiased">\n${bodyMarkup}</body>\n</html>\n`;
+  )}\n</head>\n<body class="bg-slate-50 min-h-screen antialiased">\n${bodyMarkup}${scriptFooter}</body>\n</html>\n`;
 };
 
 const wrapTextLines = (

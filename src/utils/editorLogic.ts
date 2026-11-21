@@ -1125,6 +1125,29 @@ export const insertPageTemplateIntoTree = (
       ...(bp.content !== undefined ? { content: bp.content } : {}),
       parentId,
       props: { ...bp.props },
+      ...(bp.customStyleCss !== undefined
+        ? { customStyleCss: bp.customStyleCss }
+        : {}),
+      ...(bp.htmlAttrs && Object.keys(bp.htmlAttrs).length > 0
+        ? { htmlAttrs: { ...bp.htmlAttrs } }
+        : {}),
+      ...(bp.sourceLibrary ? { sourceLibrary: bp.sourceLibrary } : {}),
+      ...(bp.materialMeta
+        ? {
+            materialMeta: {
+              ...bp.materialMeta,
+              ...(bp.materialMeta.muiProps
+                ? { muiProps: { ...bp.materialMeta.muiProps } }
+                : {}),
+              ...(bp.materialMeta.slotOverrides
+                ? { slotOverrides: { ...bp.materialMeta.slotOverrides } }
+                : {}),
+              ...(bp.materialMeta.mdTokens
+                ? { mdTokens: { ...bp.materialMeta.mdTokens } }
+                : {}),
+            },
+          }
+        : {}),
       children: childIds,
     };
     return newId;
@@ -1805,6 +1828,29 @@ export const extractNodeSubtreeBlueprint = (
     props: { ...node.props },
     ...(node.themeOverrides && Object.keys(node.themeOverrides).length > 0
       ? { themeOverrides: { ...node.themeOverrides } }
+      : {}),
+    ...(node.customStyleCss !== undefined
+      ? { customStyleCss: node.customStyleCss }
+      : {}),
+    ...(node.htmlAttrs && Object.keys(node.htmlAttrs).length > 0
+      ? { htmlAttrs: { ...node.htmlAttrs } }
+      : {}),
+    ...(node.sourceLibrary ? { sourceLibrary: node.sourceLibrary } : {}),
+    ...(node.materialMeta
+      ? {
+          materialMeta: {
+            ...node.materialMeta,
+            ...(node.materialMeta.muiProps
+              ? { muiProps: { ...node.materialMeta.muiProps } }
+              : {}),
+            ...(node.materialMeta.slotOverrides
+              ? { slotOverrides: { ...node.materialMeta.slotOverrides } }
+              : {}),
+            ...(node.materialMeta.mdTokens
+              ? { mdTokens: { ...node.materialMeta.mdTokens } }
+              : {}),
+          },
+        }
       : {}),
     ...(childrenBlueprints.length > 0 ? { children: childrenBlueprints } : {}),
   };
@@ -2622,6 +2668,29 @@ export const insertBlueprintAtTarget = (
       props: { ...bp.props },
       ...(bp.themeOverrides && Object.keys(bp.themeOverrides).length > 0
         ? { themeOverrides: { ...bp.themeOverrides } }
+        : {}),
+      ...(bp.customStyleCss !== undefined
+        ? { customStyleCss: bp.customStyleCss }
+        : {}),
+      ...(bp.htmlAttrs && Object.keys(bp.htmlAttrs).length > 0
+        ? { htmlAttrs: { ...bp.htmlAttrs } }
+        : {}),
+      ...(bp.sourceLibrary ? { sourceLibrary: bp.sourceLibrary } : {}),
+      ...(bp.materialMeta
+        ? {
+            materialMeta: {
+              ...bp.materialMeta,
+              ...(bp.materialMeta.muiProps
+                ? { muiProps: { ...bp.materialMeta.muiProps } }
+                : {}),
+              ...(bp.materialMeta.slotOverrides
+                ? { slotOverrides: { ...bp.materialMeta.slotOverrides } }
+                : {}),
+              ...(bp.materialMeta.mdTokens
+                ? { mdTokens: { ...bp.materialMeta.mdTokens } }
+                : {}),
+            },
+          }
         : {}),
       children: childIds,
     };

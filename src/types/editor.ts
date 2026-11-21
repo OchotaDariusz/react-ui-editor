@@ -17,6 +17,29 @@ export interface NodeProps {
   [key: string]: string | undefined;
 }
 
+export interface NodeComment {
+  id: string;
+  text: string;
+  createdAt: number;
+}
+
+export type LibrarySourceId =
+  | 'tailwind'
+  | 'bootstrap-4.6.2'
+  | 'bootstrap-5.2.3'
+  | 'mui-v9'
+  | 'md2'
+  | 'md3'
+  | 'imported-web';
+
+export interface MaterialNodeMeta {
+  componentTag?: string;
+  muiProps?: Record<string, string | boolean | number>;
+  slotOverrides?: Record<string, string>;
+  mdCustomTag?: string;
+  mdTokens?: Record<string, string>;
+}
+
 export interface EditorNode {
   id: string;
   type: NodeType;
@@ -27,6 +50,11 @@ export interface EditorNode {
   parentId: string | null;
   props: NodeProps;
   themeOverrides?: Record<string, string>;
+  comments?: NodeComment[];
+  customStyleCss?: string;
+  htmlAttrs?: Record<string, string>;
+  sourceLibrary?: LibrarySourceId;
+  materialMeta?: MaterialNodeMeta;
   children: string[];
 }
 
@@ -68,6 +96,10 @@ export interface NodeBlueprint {
   hidden?: boolean;
   props: NodeProps;
   themeOverrides?: Record<string, string>;
+  customStyleCss?: string;
+  htmlAttrs?: Record<string, string>;
+  sourceLibrary?: LibrarySourceId;
+  materialMeta?: MaterialNodeMeta;
   children?: NodeBlueprint[];
 }
 
@@ -126,7 +158,16 @@ export type ExportFormat = 'react' | 'html' | 'svg' | 'pdf';
 
 export type JsxCodeFormatMode = 'pretty' | 'minified';
 
-export type InspectorTab = 'properties' | 'grid-layout' | 'devtools' | 'shortcuts';
+export type TailwindVersion = 'v3' | 'v4';
+
+export type BootstrapVersion = '4.6.2' | '5.2.3';
+
+export type InspectorTab =
+  | 'properties'
+  | 'grid-layout'
+  | 'custom-styles'
+  | 'devtools'
+  | 'shortcuts';
 
 export type KeyboardShortcutCategory = 'selection' | 'editing' | 'history' | 'view';
 
@@ -143,6 +184,25 @@ export interface ThemePreset {
   name: string;
   description: string;
   variables: ThemeVariable[];
+}
+
+export type ThemeMode = 'light' | 'dark';
+
+export interface SavedProjectRecord {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: number;
+  updatedAt: number;
+  nodeCount: number;
+  nodes: NodesMap;
+  themeVars: ThemeVariable[];
+  seoMeta: SeoMetadata;
+  sharedThemeCss: string;
+  tailwindVersion: TailwindVersion;
+  bootstrapVersion: BootstrapVersion;
+  enableMd2: boolean;
+  enableMd3: boolean;
 }
 
 export const DND_ITEM_TYPE = 'CANVAS_NODE' as const;

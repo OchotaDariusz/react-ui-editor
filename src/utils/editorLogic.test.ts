@@ -2244,3 +2244,376 @@ test('themePalette sanitizes hex/token names and merges generated colors while p
   assert.equal(accent?.category, 'color');
   assert.equal(accent?.value, '#92400e');
 });
+
+test('nodeComments and layerSearch manage persistent node notes and rank matching layers cleanly', async () => {
+  const {
+    addNodeCommentInTree,
+    deleteNodeCommentInTree,
+    getNodeComments,
+  } = await import('./nodeComments.ts');
+  const { searchNodesByName } = await import('./layerSearch.ts');
+
+  // Empty comment ignored cleanly
+  const unchanged = addNodeCommentInTree(INITIAL_NODES, 'btn-1', '   ');
+  assert.equal(unchanged, INITIAL_NODES);
+
+  // Add comment to btn-1
+  const withComment1 = addNodeCommentInTree(
+    INITIAL_NODES,
+    'btn-1',
+    '  Sprawdzić kontrast CTA  ',
+    () => 'c_1',
+    1000
+  );
+  const btnComments = getNodeComments(withComment1['btn-1']);
+  assert.equal(btnComments.length, 1);
+  assert.deepEqual(btnComments[0], {
+    id: 'c_1',
+    text: 'Sprawdzić kontrast CTA',
+    createdAt: 1000,
+  });
+
+  // Add second comment, then delete first
+  const withComment2 = addNodeCommentInTree(
+    withComment1,
+    'btn-1',
+    'Dodać hover transition',
+    () => 'c_2',
+    2000
+  );
+  assert.equal(getNodeComments(withComment2['btn-1']).length, 2);
+
+  const afterDelete = deleteNodeCommentInTree(withComment2, 'btn-1', 'c_1');
+  assert.deepEqual(
+    getNodeComments(afterDelete['btn-1']).map((c) => c.id),
+    ['c_2']
+  );
+
+  // Deleting last comment clears node.comments cleanly
+  const afterDeleteAll = deleteNodeCommentInTree(afterDelete, 'btn-1', 'c_2');
+  assert.equal(afterDeleteAll['btn-1'].comments, undefined);
+
+  // layerSearch finds components by name case-insensitively and preserves comment counts & ancestor paths
+  const matchesAll = searchNodesByName(withComment2, '');
+  assert.equal(matchesAll.length, 6);
+
+  const ctaMatches = searchNodesByName(withComment2, 'cta');
+  assert.equal(ctaMatches.length, 1);
+  assert.equal(ctaMatches[0]?.id, 'btn-1');
+  assert.equal(ctaMatches[0]?.commentCount, 2);
+  assert.equal(ctaMatches[0]?.pathLabel, 'Root Canvas › Hero Section');
+
+  const noMatches = searchNodesByName(withComment2, 'nieistniejący');
+  assert.equal(noMatches.length, 0);
+});
+
+test('cssEditor supports Tailwind v3/v4 catalogs, syntax tokenization, validation, and autocomplete', async () => {
+  const {
+    buildElementCustomStyleCssRules,
+    getClassAutocompleteSuggestions,
+    getDeclarationAutocompleteSuggestions,
+    getTailwindClassCatalog,
+    setNodeCustomStyleCssInTree,
+    tokenizeCssForHighlight,
+    validateRawCssAgainstTailwind,
+  } = await import('./cssEditor.ts');
+
+  const v3Classes = getTailwindClassCatalog('v3').map((c) => c.className);
+  const v4Classes = getTailwindClassCatalog('v4').map((c) => c.className);
+  assert.ok(v3Classes.includes('shadow-sm'));
+  assert.ok(!v3Classes.includes('shadow-xs'));
+  assert.ok(v4Classes.includes('shadow-xs'));
+  assert.ok(v4Classes.includes('ring-3'));
+
+  const tokens = tokenizeCssForHighlight(
+    'background-color: var(--color-primary); border-radius: 12px; /* note */'
+  );
+  assert.ok(tokens.some((t) => t.kind === 'property' && t.text === 'background-color'));
+  assert.ok(tokens.some((t) => t.kind === 'var' && t.text === 'var(--color-primary)'));
+  assert.ok(tokens.some((t) => t.kind === 'number' && t.text === '12px'));
+  assert.ok(tokens.some((t) => t.kind === 'comment'));
+
+  const report = validateRawCssAgainstTailwind(
+    'padding: 16px;\nbadline',
+    'p-6 text-slate-900',
+    'v4'
+  );
+  assert.equal(report.syntaxErrorCount, 1);
+  assert.equal(report.conflictCount, 1);
+  assert.equal(report.equivalentCount, 1);
+  assert.equal(report.issues.find((i) => i.tailwindEquivalent)?.tailwindEquivalent, 'p-4');
+
+  const classSugs = getClassAutocompleteSuggestions(
+    'btn',
+    'v4',
+    { themeClasses: ['btn-theme'], stylesheetClasses: [] },
+    12,
+    '5.2.3'
+  );
+  assert.ok(classSugs.some((s) => s.label === 'btn-theme'));
+  assert.ok(classSugs.some((s) => s.badge === 'BS v5'));
+
+  const declSugs = getDeclarationAutocompleteSuggestions(
+    'color: var',
+    'v4',
+    [{ name: '--color-primary', value: '#2563eb', source: 'theme' }],
+    8
+  );
+  assert.ok(declSugs.some((s) => s.label === 'var(--color-primary)'));
+
+  const withCss = setNodeCustomStyleCssInTree(
+    INITIAL_NODES,
+    'btn-1',
+    'border-radius: 14px;'
+  );
+  const rules = buildElementCustomStyleCssRules(withCss);
+  assert.ok(rules.includes('[data-node-id="btn-1"]'));
+  assert.ok(rules.includes('border-radius: 14px;'));
+});
+
+test('bootstrapSupport switches v4 (4.6.2) vs v5 (5.2.3) assets, components, classes, and plain HTML output cleanly', async () => {
+  const {
+    buildBootstrapPlainHtmlDocument,
+    getBootstrapAssets,
+    getBootstrapClassesForVersion,
+    getBootstrapComponentsForVersion,
+  } = await import('./bootstrapSupport.ts');
+  const { DEFAULT_THEME_VARS } = await import('../constants/editorDefaults.ts');
+
+  const assetsV4 = getBootstrapAssets('4.6.2');
+  const assetsV5 = getBootstrapAssets('5.2.3');
+  assert.ok(assetsV4.cssUrl.includes('bootstrap@4.6.2'));
+  assert.equal(assetsV4.scriptUrls.length, 2);
+  assert.ok(assetsV4.scriptUrls[0].includes('jquery'));
+  assert.ok(assetsV5.cssUrl.includes('bootstrap@5.2.3'));
+  assert.equal(assetsV5.scriptUrls.length, 1);
+
+  const compsV4 = getBootstrapComponentsForVersion('4.6.2', 'Components');
+  const compsV5 = getBootstrapComponentsForVersion('5.2.3', 'Forms');
+  assert.ok(compsV4.some((c) => c.html.includes('data-dismiss="alert"')));
+  assert.ok(compsV5.some((c) => c.html.includes('form-floating')));
+
+  const helpersV5 = getBootstrapClassesForVersion('5.2.3', '', 'Helpers');
+  assert.ok(helpersV5.some((c) => c.className === 'visually-hidden'));
+
+  const htmlDoc = buildBootstrapPlainHtmlDocument({
+    nodes: INITIAL_NODES,
+    themeVars: DEFAULT_THEME_VARS,
+    sharedThemeCss: '.demo { color: red; }',
+    bootstrapVersion: '4.6.2',
+  });
+  assert.ok(htmlDoc.includes('bootstrap@4.6.2'));
+  assert.ok(!htmlDoc.includes('bootstrap@5.2.3'));
+});
+
+test('materialSupport supports MUI v9 + optional MD2/MD3, excludes generated hashes, and conditionally loads plain HTML deps', async () => {
+  const {
+    buildConditionalPlainHtmlDocument,
+    detectUsedLibrariesInTree,
+    filterMaterialComponents,
+    filterMaterialStyleEntries,
+    generateMuiReactJsxExport,
+  } = await import('./materialSupport.ts');
+  const { DEFAULT_THEME_VARS } = await import('../constants/editorDefaults.ts');
+
+  const onlyMui = filterMaterialComponents({
+    sourceFilter: 'all',
+    enableMd2: false,
+    enableMd3: false,
+  });
+  assert.ok(onlyMui.every((c) => c.source === 'mui-v9'));
+  assert.ok(onlyMui.some((c) => c.componentTag === 'NumberField'));
+  assert.ok(onlyMui.some((c) => c.componentTag === 'Menubar'));
+
+  const withMd2And3 = filterMaterialComponents({
+    sourceFilter: 'all',
+    enableMd2: true,
+    enableMd3: true,
+  });
+  assert.ok(withMd2And3.some((c) => c.source === 'md2'));
+  assert.ok(withMd2And3.some((c) => c.source === 'md3'));
+
+  const styles = filterMaterialStyleEntries({
+    enableMd2: true,
+    enableMd3: true,
+  });
+  assert.ok(styles.every((s) => !/\.css-[a-z0-9]+/i.test(s.name)));
+  assert.ok(styles.some((s) => s.name === '.MuiButton-root'));
+  assert.ok(styles.some((s) => s.name === 'mdc-button'));
+  assert.ok(styles.some((s) => s.name === '--md-filled-button-container-color'));
+
+  const treeWithMd3: typeof INITIAL_NODES = {
+    ...INITIAL_NODES,
+    root: {
+      ...INITIAL_NODES.root,
+      children: ['md3-btn', 'mui-btn'],
+    },
+    'md3-btn': {
+      id: 'md3-btn',
+      type: 'Button',
+      name: 'MD3',
+      content: 'Click',
+      parentId: 'root',
+      props: { className: '' },
+      sourceLibrary: 'md3',
+      materialMeta: { mdCustomTag: 'md-filled-button' },
+      children: [],
+    },
+    'mui-btn': {
+      id: 'mui-btn',
+      type: 'Button',
+      name: 'MUI',
+      content: 'Save',
+      parentId: 'root',
+      props: { className: '' },
+      sourceLibrary: 'mui-v9',
+      materialMeta: {
+        componentTag: 'Button',
+        muiProps: { variant: 'contained', color: 'primary' },
+        slotOverrides: { '.MuiButton-startIcon': 'marginRight: 8px;' },
+      },
+      children: [],
+    },
+  };
+
+  const detected = detectUsedLibrariesInTree(treeWithMd3);
+  assert.equal(detected.usesMuiV9, true);
+  assert.equal(detected.usesMd2, false);
+  assert.equal(detected.usesMd3, true);
+  assert.ok(detected.md3Modules.includes('@material/web/button/filled-button.js'));
+
+  const html = buildConditionalPlainHtmlDocument({
+    nodes: treeWithMd3,
+    themeVars: DEFAULT_THEME_VARS,
+    sharedThemeCss: '',
+  });
+  assert.ok(html.includes('data-material-library="md3"'));
+  assert.ok(!html.includes('data-material-library="md2"'));
+  assert.ok(html.includes('<md-filled-button'));
+
+  const jsx = generateMuiReactJsxExport(treeWithMd3, DEFAULT_THEME_VARS, true);
+  assert.ok(jsx.includes("from '@mui/material'"));
+  assert.ok(jsx.includes('<Button variant="contained" color="primary"'));
+  assert.ok(jsx.includes('.MuiButton-startIcon'));
+});
+
+test('webpageImporter reconstructs HTML structure and inserts informative placeholders for missing logos, images, and JS widgets', async () => {
+  const { parseHtmlToWebpageBlueprint } = await import('./webpageImporter.ts');
+
+  const sampleHtml = `<!DOCTYPE html>
+  <html>
+    <head>
+      <title>Acme Studio</title>
+      <meta name="description" content="Sample design page" />
+      <style>.hero { color: #2563eb; background: #f8fafc; }</style>
+    </head>
+    <body>
+      <header>
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+        <a href="/pricing">Pricing</a>
+      </header>
+      <main>
+        <h1>Build faster UI</h1>
+        <p>Visual builder with automatic placeholders.</p>
+        <img src="/hero.png" alt="Hero preview" />
+        <img alt="Missing banner" />
+        <video src="/demo.mp4"></video>
+        <div id="chart-root" class="chart-widget"></div>
+      </main>
+    </body>
+  </html>`;
+
+  const result = parseHtmlToWebpageBlueprint(sampleHtml, 'https://acme.example.com');
+  assert.equal(result.title, 'Acme Studio');
+  assert.equal(result.description, 'Sample design page');
+  assert.ok(result.detectedThemeColors.includes('#2563eb'));
+  assert.ok(result.stats.headings >= 1);
+  assert.ok(result.stats.images >= 1);
+  assert.ok(result.placeholders.length >= 3);
+  assert.ok(result.placeholders.some((p) => p.kind === 'logo'));
+  assert.ok(result.placeholders.some((p) => p.kind === 'image'));
+  assert.ok(
+    result.placeholders.some((p) => p.kind === 'media' || p.kind === 'widget')
+  );
+  assert.ok((result.blueprint.children || []).length >= 2);
+});
+
+test('projectStorage saves, updates, renames, deletes, and serializes/parses project files cleanly', async () => {
+  const {
+    buildProjectFileName,
+    deleteSavedProject,
+    parseImportedProjectJson,
+    renameSavedProject,
+    serializeProjectToFileContent,
+    upsertSavedProject,
+  } = await import('./projectStorage.ts');
+
+  const { DEFAULT_THEME_VARS } = await import('../constants/editorDefaults.ts');
+  const baseInput = {
+    name: 'Portfolio  Landing ',
+    description: 'Clean studio hero',
+    nodes: INITIAL_NODES,
+    themeVars: DEFAULT_THEME_VARS,
+    seoMeta: { title: 'Portfolio', description: 'Hero', canonicalUrl: '' },
+    sharedThemeCss: '.demo { color: red; }',
+    tailwindVersion: 'v4' as const,
+    bootstrapVersion: '5.2.3' as const,
+    enableMd2: true,
+    enableMd3: false,
+    now: 1700000000000,
+  };
+
+  const firstSave = upsertSavedProject([], baseInput);
+  assert.equal(firstSave.projects.length, 1);
+  assert.equal(firstSave.saved.name, 'Portfolio Landing');
+  assert.equal(firstSave.saved.nodeCount, Object.keys(INITIAL_NODES).length);
+
+  // Overwrite existing project keeps createdAt & id, updates updatedAt & content
+  const updatedSave = upsertSavedProject(firstSave.projects, {
+    ...baseInput,
+    id: firstSave.saved.id,
+    name: 'Portfolio v2',
+    enableMd3: true,
+    now: 1700000005000,
+  });
+  assert.equal(updatedSave.projects.length, 1);
+  assert.equal(updatedSave.saved.id, firstSave.saved.id);
+  assert.equal(updatedSave.saved.createdAt, 1700000000000);
+  assert.equal(updatedSave.saved.updatedAt, 1700000005000);
+  assert.equal(updatedSave.saved.enableMd3, true);
+
+  // Save as new adds second record
+  const secondSave = upsertSavedProject(updatedSave.projects, {
+    ...baseInput,
+    id: null,
+    name: 'SaaS Pricing',
+    now: 1700000010000,
+  });
+  assert.equal(secondSave.projects.length, 2);
+
+  // Rename & delete
+  const renamed = renameSavedProject(
+    secondSave.projects,
+    firstSave.saved.id,
+    'Portfolio Final',
+    1700000015000
+  );
+  assert.equal(
+    renamed.find((p) => p.id === firstSave.saved.id)?.name,
+    'Portfolio Final'
+  );
+  const afterDelete = deleteSavedProject(renamed, secondSave.saved.id);
+  assert.equal(afterDelete.length, 1);
+
+  // Serialize -> Parse round-trip
+  const serialized = serializeProjectToFileContent(afterDelete[0]);
+  const parsed = parseImportedProjectJson(serialized);
+  assert.ok(parsed);
+  assert.equal(parsed?.name, 'Portfolio Final');
+  assert.equal(parsed?.sharedThemeCss, '.demo { color: red; }');
+  assert.equal(parsed?.enableMd2, true);
+  assert.equal(buildProjectFileName('Łódź Studio v2!'), 'lodz-studio-v2.ui-project.json');
+  assert.equal(parseImportedProjectJson('{"bad": true}'), null);
+});
+
+

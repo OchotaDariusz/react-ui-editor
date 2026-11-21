@@ -10,7 +10,10 @@ import { EditorToolbar } from './components/EditorToolbar';
 import { InspectorPanel } from './components/InspectorPanel';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { LeftSidebar } from './components/LeftSidebar';
+import { MuiReactPagePreview } from './components/MaterialNodeRenderer';
+import { ProjectLibraryModal } from './components/ProjectLibraryModal';
 import { ResponsivePreview } from './components/ResponsivePreview';
+import { WebpageImportModal } from './components/WebpageImportModal';
 import {
   ASSETS_STORAGE_KEY,
   COMPONENT_HISTORY_STORAGE_KEY,
@@ -29,6 +32,7 @@ import {
   type TemplateBlueprintNode,
 } from './constants/editorDefaults';
 import type {
+  BootstrapVersion,
   ComponentHistoryEntry,
   ComponentHistoryEventType,
   EditorNode,
@@ -36,12 +40,16 @@ import type {
   HistoryState,
   ImportedAsset,
   LeftTab,
+  MaterialNodeMeta,
   NodeBlueprint,
   NodesMap,
   NodeType,
   RecentComponentSearch,
   SavedComponentEntry,
+  SavedProjectRecord,
   SeoMetadata,
+  TailwindVersion,
+  ThemeMode,
   ThemeVarCategory,
   ThemeVariable,
   ViewportMode,
@@ -109,6 +117,42 @@ import {
   clearAllNodeThemeOverridesInTree,
   setNodeThemeOverrideInTree,
 } from './utils/themeUsage';
+import { searchNodesByName } from './utils/layerSearch';
+import {
+  addNodeCommentInTree,
+  deleteNodeCommentInTree,
+} from './utils/nodeComments';
+import {
+  BOOTSTRAP_VERSION_STORAGE_KEY,
+} from './utils/bootstrapSupport';
+import {
+  DEFAULT_SHARED_THEME_CSS,
+  TAILWIND_VERSION_STORAGE_KEY,
+  THEME_SHARED_CSS_STORAGE_KEY,
+  buildElementCustomStyleCssRules,
+  setNodeCustomStyleCssInTree,
+} from './utils/cssEditor';
+import {
+  MATERIAL_ENABLE_MD2_STORAGE_KEY,
+  MATERIAL_ENABLE_MD3_STORAGE_KEY,
+  buildConditionalPlainHtmlDocument,
+  updateNodeMaterialMetaInTree,
+} from './utils/materialSupport';
+import type { WebpageImportResult } from './utils/webpageImporter';
+import {
+  buildProjectFileName,
+  deleteSavedProject,
+  loadActiveProjectId,
+  loadSavedProjectsFromStorage,
+  loadSavedThemeMode,
+  parseImportedProjectJson,
+  persistActiveProjectId,
+  persistSavedProjectsToStorage,
+  persistThemeMode,
+  renameSavedProject,
+  serializeProjectToFileContent,
+  upsertSavedProject,
+} from './utils/projectStorage';
 
 function loadInitialHistory(): HistoryState {
   try {
@@ -293,6 +337,9 @@ export default function App() {
     loadInitialBooleanFlag(RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY, false)
   );
   const [previewMode, setPreviewMode] = useState<boolean>(false);
+  const [previewRuntimeMode, setPreviewRuntimeMode] = useState<
+    'canvas' | 'html-preview' | 'mui-react-preview'
+  >('canvas');
   const [responsivePreview, setResponsivePreview] = useState<boolean>(false);
   const [showCode, setShowCode] = useState<boolean>(false);
   const [codeExportFormat, setCodeExportFormat] =
@@ -302,6 +349,54 @@ export default function App() {
   const [copiedJson, setCopiedJson] = useState<boolean>(false);
   const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
+  const [layerSearchQuery, setLayerSearchQuery] = useState<string>('');
+  const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(
+    null
+  );
+  const [webpageImportOpen, setWebpageImportOpen] = useState<boolean>(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(loadSavedThemeMode);
+  const [savedProjects, setSavedProjects] = useState<SavedProjectRecord[]>(
+    loadSavedProjectsFromStorage
+  );
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(
+    loadActiveProjectId
+  );
+  const [projectsModalOpen, setProjectsModalOpen] = useState<boolean>(false);
+  const [projectSavedFlash, setProjectSavedFlash] = useState<boolean>(false);
+  const [tailwindVersion, setTailwindVersion] = useState<TailwindVersion>(() => {
+    try {
+      const saved = localStorage.getItem(TAILWIND_VERSION_STORAGE_KEY);
+      if (saved === 'v3' || saved === 'v4') return saved;
+    } catch {
+      // Ignore
+    }
+    return 'v4';
+  });
+  const [bootstrapVersion, setBootstrapVersion] = useState<BootstrapVersion>(() => {
+    try {
+      const saved = localStorage.getItem(BOOTSTRAP_VERSION_STORAGE_KEY);
+      if (saved === '4.6.2' || saved === '5.2.3') return saved;
+    } catch {
+      // Ignore
+    }
+    return '5.2.3';
+  });
+  const [enableMd2, setEnableMd2] = useState<boolean>(() =>
+    loadInitialBooleanFlag(MATERIAL_ENABLE_MD2_STORAGE_KEY, false)
+  );
+  const [enableMd3, setEnableMd3] = useState<boolean>(() =>
+    loadInitialBooleanFlag(MATERIAL_ENABLE_MD3_STORAGE_KEY, false)
+  );
+  const [sharedThemeCss, setSharedThemeCss] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(THEME_SHARED_CSS_STORAGE_KEY);
+      if (saved !== null) return saved;
+    } catch {
+      // Ignore
+    }
+    return DEFAULT_SHARED_THEME_CSS;
+  });
+  const highlightTimerRef = useRef<number | null>(null);
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(
     loadInitialShortcutsModal
   );
@@ -309,6 +404,14 @@ export default function App() {
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const nodesRef = useRef<NodesMap>(nodes);
   nodesRef.current = nodes;
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const controller = createAutoSaveController({
@@ -441,6 +544,61 @@ export default function App() {
     }
   }, [showRulers]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(TAILWIND_VERSION_STORAGE_KEY, tailwindVersion);
+    } catch {
+      // Ignore
+    }
+  }, [tailwindVersion]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(BOOTSTRAP_VERSION_STORAGE_KEY, bootstrapVersion);
+    } catch {
+      // Ignore
+    }
+  }, [bootstrapVersion]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MATERIAL_ENABLE_MD2_STORAGE_KEY, String(enableMd2));
+    } catch {
+      // Ignore
+    }
+  }, [enableMd2]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MATERIAL_ENABLE_MD3_STORAGE_KEY, String(enableMd3));
+    } catch {
+      // Ignore
+    }
+  }, [enableMd3]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THEME_SHARED_CSS_STORAGE_KEY, sharedThemeCss);
+    } catch {
+      // Ignore
+    }
+  }, [sharedThemeCss]);
+
+  useEffect(() => {
+    persistThemeMode(themeMode);
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('dark', themeMode === 'dark');
+    }
+  }, [themeMode]);
+
+  useEffect(() => {
+    persistSavedProjectsToStorage(savedProjects);
+  }, [savedProjects]);
+
+  useEffect(() => {
+    persistActiveProjectId(activeProjectId);
+  }, [activeProjectId]);
+
   const commitNodes = useCallback(
     (updater: NodesMap | ((curr: NodesMap) => NodesMap)) => {
       setHistory((curr) => {
@@ -510,6 +668,101 @@ export default function App() {
       commitNodes((prev) => toggleNodeVisibilityInTree(prev, id));
     },
     [commitNodes]
+  );
+
+  const matchingSearchIds = useMemo(() => {
+    if (!layerSearchQuery.trim()) return undefined;
+    return new Set(searchNodesByName(nodes, layerSearchQuery).map((m) => m.id));
+  }, [nodes, layerSearchQuery]);
+
+  const handleSelectLayerSearchResult = useCallback(
+    (nodeId: string) => {
+      if (!nodes[nodeId]) return;
+      setSelectedIds([nodeId]);
+      setLeftSidebarCollapsed(false);
+      setLeftTab('layers');
+      setShowCode(false);
+      setResponsivePreview(false);
+      setHighlightedNodeId(nodeId);
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+      highlightTimerRef.current = window.setTimeout(() => {
+        setHighlightedNodeId((curr) => (curr === nodeId ? null : curr));
+        highlightTimerRef.current = null;
+      }, 3500);
+    },
+    [nodes]
+  );
+
+  const handleAddNodeComment = useCallback(
+    (nodeId: string, text: string) => {
+      commitNodes((prev) => addNodeCommentInTree(prev, nodeId, text));
+    },
+    [commitNodes]
+  );
+
+  const handleDeleteNodeComment = useCallback(
+    (nodeId: string, commentId: string) => {
+      commitNodes((prev) => deleteNodeCommentInTree(prev, nodeId, commentId));
+    },
+    [commitNodes]
+  );
+
+  const handleUpdateNodeCustomCss = useCallback(
+    (nodeId: string, nextCss: string) => {
+      commitNodes((prev) => setNodeCustomStyleCssInTree(prev, nodeId, nextCss));
+    },
+    [commitNodes]
+  );
+
+  const handleUpdateNodeMaterialMeta = useCallback(
+    (nodeId: string, updater: (curr: MaterialNodeMeta) => MaterialNodeMeta) => {
+      commitNodes((prev) => updateNodeMaterialMetaInTree(prev, nodeId, updater));
+    },
+    [commitNodes]
+  );
+
+  const handleInsertExternalBlueprint = useCallback(
+    (blueprint: NodeBlueprint, _label: string) => {
+      const result = insertPageTemplateIntoTree(nodes, selectedId, blueprint);
+      if (!result.createdId) return;
+      commitNodes(result.nodes);
+      setSelectedIds([result.createdId]);
+      recordComponentHistory(result.nodes, result.createdId, 'added');
+    },
+    [nodes, selectedId, commitNodes, recordComponentHistory]
+  );
+
+  const handleApplyImportedWebpage = useCallback(
+    (result: WebpageImportResult, mode: 'append' | 'replace') => {
+      const baseNodes =
+        mode === 'replace'
+          ? {
+              root: {
+                ...nodes.root,
+                children: [],
+              },
+            }
+          : nodes;
+      const inserted = insertPageTemplateIntoTree(
+        baseNodes,
+        mode === 'replace' ? 'root' : selectedId,
+        result.blueprint
+      );
+      if (!inserted.createdId) return;
+      commitNodes(inserted.nodes);
+      setSelectedIds([inserted.createdId]);
+      recordComponentHistory(inserted.nodes, inserted.createdId, 'added');
+      if (result.title) {
+        setSeoMetadata((prev) => ({
+          ...prev,
+          title: result.title,
+          ...(result.description ? { description: result.description } : {}),
+        }));
+      }
+    },
+    [nodes, selectedId, commitNodes, recordComponentHistory]
   );
 
   const handleToggleMultiSelect = useCallback(() => {
@@ -1134,8 +1387,12 @@ export default function App() {
     [nodes, seoMetadata, isJsxPrettier]
   );
   const generatedHtml = useMemo(
-    () => generateHtmlExport(nodes, themeVars, seoMetadata),
-    [nodes, themeVars, seoMetadata]
+    () =>
+      generateHtmlExport(nodes, themeVars, seoMetadata, {
+        sharedThemeCss,
+        bootstrapVersion,
+      }),
+    [nodes, themeVars, seoMetadata, sharedThemeCss, bootstrapVersion]
   );
   const generatedSvg = useMemo(
     () => generateStaticSvgExport(nodes, themeVars, seoMetadata),
@@ -1148,6 +1405,21 @@ export default function App() {
   const arbitraryGridCssRules = useMemo(
     () => buildArbitraryGridCssRules(nodes),
     [nodes]
+  );
+  const elementCustomStyleCss = useMemo(
+    () => buildElementCustomStyleCssRules(nodes),
+    [nodes]
+  );
+  const plainHtmlPreviewDoc = useMemo(
+    () =>
+      buildConditionalPlainHtmlDocument({
+        nodes,
+        themeVars,
+        sharedThemeCss,
+        seo: seoMetadata,
+        bootstrapVersion,
+      }),
+    [nodes, themeVars, sharedThemeCss, seoMetadata, bootstrapVersion]
   );
 
   const handleCopyCode = useCallback(
@@ -1216,6 +1488,140 @@ export default function App() {
     [generatedHtml, generatedCode, seoMetadata, nodes, themeVars, handleExportPdf]
   );
 
+  const activeProject = useMemo(
+    () => savedProjects.find((p) => p.id === activeProjectId) ?? null,
+    [savedProjects, activeProjectId]
+  );
+
+  const handleToggleThemeMode = useCallback(() => {
+    setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  }, []);
+
+  const flashProjectSaved = useCallback(() => {
+    setProjectSavedFlash(true);
+    window.setTimeout(() => setProjectSavedFlash(false), 1800);
+  }, []);
+
+  const handleSaveProject = useCallback(
+    ({
+      name,
+      description,
+      asNew,
+    }: {
+      name: string;
+      description: string;
+      asNew: boolean;
+    }) => {
+      setSavedProjects((prev) => {
+        const { projects, saved } = upsertSavedProject(prev, {
+          id: asNew ? null : activeProjectId,
+          name,
+          description,
+          nodes,
+          themeVars,
+          seoMeta: seoMetadata,
+          sharedThemeCss,
+          tailwindVersion,
+          bootstrapVersion,
+          enableMd2,
+          enableMd3,
+        });
+        setActiveProjectId(saved.id);
+        return projects;
+      });
+      flashProjectSaved();
+    },
+    [
+      activeProjectId,
+      nodes,
+      themeVars,
+      seoMetadata,
+      sharedThemeCss,
+      tailwindVersion,
+      bootstrapVersion,
+      enableMd2,
+      enableMd3,
+      flashProjectSaved,
+    ]
+  );
+
+  const handleQuickSaveProject = useCallback(() => {
+    if (activeProject) {
+      handleSaveProject({
+        name: activeProject.name,
+        description: activeProject.description || '',
+        asNew: false,
+      });
+    } else {
+      setProjectsModalOpen(true);
+    }
+  }, [activeProject, handleSaveProject]);
+
+  const handleOpenProject = useCallback((project: SavedProjectRecord) => {
+    const clonedNodes = JSON.parse(JSON.stringify(project.nodes)) as NodesMap;
+    setHistory({ past: [], present: clonedNodes, future: [] });
+    setThemeVars(JSON.parse(JSON.stringify(project.themeVars)));
+    setSeoMetadata(JSON.parse(JSON.stringify(project.seoMeta)));
+    setSharedThemeCss(project.sharedThemeCss);
+    setTailwindVersion(project.tailwindVersion);
+    setBootstrapVersion(project.bootstrapVersion);
+    setEnableMd2(project.enableMd2);
+    setEnableMd3(project.enableMd3);
+    setActiveProjectId(project.id);
+    setSelectedIds(['root']);
+    setMultiSelectMode(false);
+    setShowCode(false);
+    setResponsivePreview(false);
+  }, []);
+
+  const handleRenameProject = useCallback((projectId: string, nextName: string) => {
+    setSavedProjects((prev) => renameSavedProject(prev, projectId, nextName));
+  }, []);
+
+  const handleDeleteProject = useCallback(
+    (projectId: string) => {
+      setSavedProjects((prev) => deleteSavedProject(prev, projectId));
+      if (activeProjectId === projectId) {
+        setActiveProjectId(null);
+      }
+    },
+    [activeProjectId]
+  );
+
+  const handleDownloadProjectFile = useCallback((project: SavedProjectRecord) => {
+    downloadTextFile(
+      serializeProjectToFileContent(project),
+      buildProjectFileName(project.name),
+      'application/json;charset=utf-8'
+    );
+  }, []);
+
+  const handleImportProjectFile = useCallback(
+    (rawJson: string) => {
+      const parsed = parseImportedProjectJson(rawJson);
+      if (!parsed) return false;
+      setSavedProjects((prev) => {
+        const withoutSame = prev.filter((item) => item.id !== parsed.id);
+        return [parsed, ...withoutSame];
+      });
+      handleOpenProject(parsed);
+      flashProjectSaved();
+      return true;
+    },
+    [handleOpenProject, flashProjectSaved]
+  );
+
+  useEffect(() => {
+    const onGlobalSaveKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        handleQuickSaveProject();
+      }
+    };
+    window.addEventListener('keydown', onGlobalSaveKey);
+    return () => window.removeEventListener('keydown', onGlobalSaveKey);
+  }, [handleQuickSaveProject]);
+
   const selectedNode = nodes[selectedId];
 
   const viewportWidthClass =
@@ -1228,6 +1634,12 @@ export default function App() {
   return (
     <DndProvider backend={HTML5Backend}>
       {themeCssRules && <style id="editor-theme-vars">{themeCssRules}</style>}
+      {sharedThemeCss.trim() && (
+        <style id="editor-shared-theme-css">{sharedThemeCss}</style>
+      )}
+      {elementCustomStyleCss && (
+        <style id="editor-element-custom-css">{elementCustomStyleCss}</style>
+      )}
       {arbitraryGridCssRules && (
         <style id="editor-arbitrary-grid-vars">{arbitraryGridCssRules}</style>
       )}
@@ -1265,6 +1677,8 @@ export default function App() {
             nodes={nodes}
             selectedId={selectedId}
             selectedIds={selectedIds}
+            highlightedNodeId={highlightedNodeId}
+            matchingSearchIds={matchingSearchIds}
             onSelectNode={handleSelectNode}
             onToggleNodeVisibility={handleToggleNodeVisibility}
           />
@@ -1317,7 +1731,74 @@ export default function App() {
             }}
             showCode={showCode}
             onToggleShowCode={() => setShowCode((s) => !s)}
+            nodes={nodes}
+            layerSearchQuery={layerSearchQuery}
+            onChangeLayerSearchQuery={setLayerSearchQuery}
+            onSelectLayerSearchResult={handleSelectLayerSearchResult}
+            onOpenWebpageImport={() => setWebpageImportOpen(true)}
+            themeMode={themeMode}
+            onToggleThemeMode={handleToggleThemeMode}
+            activeProjectName={activeProject?.name ?? null}
+            projectSavedFlash={projectSavedFlash}
+            onOpenProjectsModal={() => setProjectsModalOpen(true)}
+            onQuickSaveProject={handleQuickSaveProject}
           />
+
+          {previewMode && !showCode && !responsivePreview && (
+            <div
+              data-testid="preview-runtime-bar"
+              className="h-10 px-4 bg-white border-b border-slate-200 flex items-center justify-between gap-2 shrink-0"
+            >
+              <span className="text-[11px] font-semibold text-slate-600">
+                Tryb podglądu strony:
+              </span>
+              <div
+                role="group"
+                aria-label="Środowisko podglądu"
+                className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200"
+              >
+                <button
+                  type="button"
+                  data-testid="preview-runtime-canvas"
+                  aria-pressed={previewRuntimeMode === 'canvas'}
+                  onClick={() => setPreviewRuntimeMode('canvas')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-semibold ${
+                    previewRuntimeMode === 'canvas'
+                      ? 'bg-white text-blue-600 shadow-xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Canvas
+                </button>
+                <button
+                  type="button"
+                  data-testid="preview-runtime-html"
+                  aria-pressed={previewRuntimeMode === 'html-preview'}
+                  onClick={() => setPreviewRuntimeMode('html-preview')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-semibold ${
+                    previewRuntimeMode === 'html-preview'
+                      ? 'bg-white text-violet-700 shadow-xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  Plain HTML + BS {bootstrapVersion}
+                </button>
+                <button
+                  type="button"
+                  data-testid="preview-runtime-mui"
+                  aria-pressed={previewRuntimeMode === 'mui-react-preview'}
+                  onClick={() => setPreviewRuntimeMode('mui-react-preview')}
+                  className={`px-2.5 py-1 rounded text-[11px] font-semibold ${
+                    previewRuntimeMode === 'mui-react-preview'
+                      ? 'bg-white text-sky-700 shadow-xs'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  MUI v9 React
+                </button>
+              </div>
+            </div>
+          )}
 
           {!previewMode && !showCode && !responsivePreview && (
             <CanvasBreadcrumb
@@ -1341,7 +1822,7 @@ export default function App() {
 
             <div
               ref={canvasScrollRef}
-              className={`flex-1 overflow-auto bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:18px_18px] ${
+              className={`flex-1 overflow-auto bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] dark:bg-[radial-gradient(#334155_1px,transparent_1px)] dark:bg-slate-950 [background-size:18px_18px] ${
                 showRulers && !showCode && !responsivePreview
                   ? 'pt-10 pl-10 pr-6 pb-6'
                   : 'p-6'
@@ -1385,10 +1866,31 @@ export default function App() {
                   onDropSavedComponent={handleDropSavedComponent}
                   onDropAsset={handleDropAsset}
                 />
+              ) : previewMode && previewRuntimeMode === 'html-preview' ? (
+                <div
+                  data-canvas-artboard="true"
+                  className={`${viewportWidthClass} mx-auto h-full bg-white shadow-lg rounded-2xl border border-slate-200 overflow-hidden`}
+                >
+                  <iframe
+                    title={`Plain HTML Preview (Bootstrap ${bootstrapVersion})`}
+                    data-testid="bootstrap-page-preview-iframe"
+                    srcDoc={plainHtmlPreviewDoc}
+                    className="w-full h-full min-h-[540px] border-0 bg-white"
+                    sandbox="allow-scripts"
+                  />
+                </div>
+              ) : previewMode && previewRuntimeMode === 'mui-react-preview' ? (
+                <div
+                  data-canvas-artboard="true"
+                  className={`${viewportWidthClass} mx-auto`}
+                >
+                  <MuiReactPagePreview nodes={nodes} themeVars={themeVars} />
+                </div>
               ) : (
                 <div
                   ref={canvasViewportRef}
                   data-testid="canvas-viewport"
+                  data-canvas-artboard="true"
                   data-viewport={viewport}
                   data-zoom={Math.round(zoom * 100)}
                   className={`${viewportWidthClass} ${getZoomScaleClass(
@@ -1404,6 +1906,9 @@ export default function App() {
                     selectedIds={selectedIds}
                     previewMode={previewMode}
                     showGuides={showGuides}
+                    highlightedNodeId={highlightedNodeId}
+                    matchingSearchIds={matchingSearchIds}
+                    themeVars={themeVars}
                     onSelect={handleSelectNode}
                     onMoveNode={handleMoveNode}
                     onDropNewComponent={handleDropNewComponent}
@@ -1436,6 +1941,24 @@ export default function App() {
           <KeyboardShortcutsModal
             open={showShortcutsModal}
             onClose={() => setShowShortcutsModal(false)}
+          />
+          <WebpageImportModal
+            open={webpageImportOpen}
+            onClose={() => setWebpageImportOpen(false)}
+            onApplyImportedBlueprint={handleApplyImportedWebpage}
+          />
+          <ProjectLibraryModal
+            isOpen={projectsModalOpen}
+            onClose={() => setProjectsModalOpen(false)}
+            projects={savedProjects}
+            activeProjectId={activeProjectId}
+            defaultProjectName={seoMetadata.title || 'Nowy projekt'}
+            onSaveProject={handleSaveProject}
+            onOpenProject={handleOpenProject}
+            onRenameProject={handleRenameProject}
+            onDeleteProject={handleDeleteProject}
+            onDownloadProjectFile={handleDownloadProjectFile}
+            onImportProjectFile={handleImportProjectFile}
           />
         </main>
 
@@ -1474,6 +1997,21 @@ export default function App() {
             onCollapse={() => setRightSidebarCollapsed(true)}
             seoMetadata={seoMetadata}
             onChangeSeo={handleChangeSeo}
+            onAddNodeComment={handleAddNodeComment}
+            onDeleteNodeComment={handleDeleteNodeComment}
+            tailwindVersion={tailwindVersion}
+            onChangeTailwindVersion={setTailwindVersion}
+            bootstrapVersion={bootstrapVersion}
+            onChangeBootstrapVersion={setBootstrapVersion}
+            enableMd2={enableMd2}
+            onToggleEnableMd2={setEnableMd2}
+            enableMd3={enableMd3}
+            onToggleEnableMd3={setEnableMd3}
+            sharedThemeCss={sharedThemeCss}
+            onChangeSharedThemeCss={setSharedThemeCss}
+            onUpdateNodeCustomCss={handleUpdateNodeCustomCss}
+            onUpdateNodeMaterialMeta={handleUpdateNodeMaterialMeta}
+            onInsertBlueprint={handleInsertExternalBlueprint}
           />
         )}
       </div>

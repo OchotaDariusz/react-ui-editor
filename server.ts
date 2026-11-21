@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type } from '@google/genai';
 import { sanitizeGeneratedColors } from './src/utils/themePalette.ts';
+import { parseHtmlToWebpageBlueprint } from './src/utils/webpageImporter.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -343,6 +344,95 @@ async function startServer() {
           : 500;
       res.status(status >= 400 && status < 600 ? status : 500).json({
         error: `Nie udało się wygenerować palety kolorów AI: ${message}`,
+      });
+    }
+  });
+
+  app.post('/api/import-webpage', async (req, res) => {
+    const body = (req.body || {}) as { url?: unknown; html?: unknown };
+    const rawUrl = typeof body.url === 'string' ? body.url.trim() : '';
+    const rawHtml = typeof body.html === 'string' ? body.html : '';
+
+    if (!rawUrl && !rawHtml.trim()) {
+      res.status(400).json({
+        error: 'Podaj poprawny adres URL strony (http:// lub https://) lub kod HTML.',
+      });
+      return;
+    }
+
+    if (rawHtml.trim()) {
+      const result = parseHtmlToWebpageBlueprint(rawHtml, rawUrl);
+      res.json(result);
+      return;
+    }
+
+    let parsedUrl: URL;
+    try {
+      const normalizedUrl = /^https?:\/\//i.test(rawUrl)
+        ? rawUrl
+        : `https://${rawUrl}`;
+      parsedUrl = new URL(normalizedUrl);
+    } catch {
+      res.status(400).json({
+        error: 'Nieprawidłowy format adresu URL.',
+      });
+      return;
+    }
+
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      res.status(400).json({
+        error: 'Obsługiwane są wyłącznie adresy http:// oraz https://.',
+      });
+      return;
+    }
+
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (
+      hostname === 'metadata.google.internal' ||
+      hostname === '169.254.169.254'
+    ) {
+      res.status(403).json({
+        error: 'Niedozwolony docelowy adres sieciowy.',
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(parsedUrl.toString(), {
+        method: 'GET',
+        redirect: 'follow',
+        signal: AbortSignal.timeout(10000),
+        headers: {
+          'User-Agent': 'ReactUIStudio-WebpageImporter/1.0',
+          Accept: 'text/html,application/xhtml+xml',
+        },
+      });
+
+      if (!response.ok) {
+        res.status(422).json({
+          error: `Strona zwróciła kod HTTP ${response.status}. Możesz wkleić HTML ręcznie, jeśli strona blokuje skanowanie.`,
+        });
+        return;
+      }
+
+      const fetchedHtml = await response.text();
+      if (!fetchedHtml.trim()) {
+        res.status(422).json({
+          error: 'Pobrana odpowiedź HTML jest pusta.',
+        });
+        return;
+      }
+
+      const result = parseHtmlToWebpageBlueprint(
+        fetchedHtml.slice(0, 450000),
+        response.url || parsedUrl.toString()
+      );
+      res.json(result);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Błąd połączenia z adresem URL.';
+      res.status(502).json({
+        error: `Nie udało się zeskanować strony: ${message}`,
       });
     }
   });
